@@ -37,10 +37,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-def format_currency(amount: float) -> str:
-    """Format currency amount (basic implementation)"""
-    return f"{amount:,.2f}"
-
 # Constants for risk multipliers
 PRODUCT_RISKS = {
     "Asset Backed Loan": 1.00,
@@ -76,9 +72,13 @@ UTILIZATION_FACTORS = {
     "Healthcare": 0.45,
     "Hospitality": 0.35,
     "Oil & Gas": 0.50,
-    "Real Estate": 0.30,
-    "Mining": 0.45
+    "Real Estate": 0.30
 }
+
+# Helper Functions
+def format_currency(amount: float) -> str:
+    """Format currency amount (basic implementation)"""
+    return f"{amount:,.2f}"
 
 def get_risk_levels(malaa_score: int, industry: str, product: str) -> tuple:
     """Categorize risk levels for borrower, industry and product"""
@@ -127,6 +127,32 @@ def calculate_risk_score(
     
     return max(min(risk, 2.0), 0.4)
 
+def ensure_min_nim(
+    risk_score: float,
+    target_nim: float,
+    oibor: float,
+    funding_cost: float,
+    min_spread: int = 75
+) -> float:
+    """
+    Calculate minimum spread required to achieve target NIM considering:
+    - Risk-based spread component (100 + 250*(risk-1))
+    - Required margin (target_nim - (fee_yield - credit_cost - opex))
+    Returns the higher of risk-based spread or NIM-required spread
+    """
+    fee_yield = 0.4
+    credit_cost = max(min(0.4 * risk_score, 1.0), 0.2)
+    opex = 0.4
+    
+    # Risk-based spread calculation
+    risk_spread = max(min(100 + 250 * (risk_score - 1), 500), min_spread)
+    
+    # NIM-required spread calculation
+    required_margin = target_nim - (fee_yield - credit_cost - opex)
+    required_spread = max((required_margin - oibor) * 100, min_spread)
+    
+    return max(risk_spread, required_spread)
+
 def calculate_pricing(
     risk_score: float,
     tenor: int,
@@ -135,7 +161,7 @@ def calculate_pricing(
     cost_of_funds_pct: float,
     target_nim_pct: float,
     product: str,
-    industry: str,  # Added industry parameter
+    industry: str,
     working_capital: Optional[float] = None,
     sales: Optional[float] = None
 ) -> List[Dict[str, Union[str, int, float]]]:
@@ -152,7 +178,14 @@ def calculate_pricing(
     for bucket, config in bucket_params.items():
         adj_risk = max(min(risk_score * config["multiplier"], 2.0), 0.4)
         
-        base_spread = max(min(100 + 250 * (adj_risk - 1), 500), min_spread)
+        # Ensure spread meets both risk and NIM requirements
+        base_spread = ensure_min_nim(
+            risk_score=adj_risk,
+            target_nim=target_nim_pct,
+            oibor=oibor_pct,
+            funding_cost=cost_of_funds_pct
+        )
+        
         spread_min = max(base_spread - config["band"], min_spread)
         spread_max = max(base_spread + config["band"], spread_min + 1)
         
@@ -160,20 +193,19 @@ def calculate_pricing(
         rate_max = max(min(oibor_pct + spread_max / 100, 10.0), rate_min + 0.01)
         rate_avg = (rate_min + rate_max) / 2
         
+        # Calculate financial metrics with guaranteed NIM
         funding_cost = cost_of_funds_pct
         credit_cost = max(min(0.4 * adj_risk, 1.0), 0.2)
         fee_yield = 0.4
         opex = 0.4
+        nim_pct = rate_avg + fee_yield - funding_cost - credit_cost - opex
         
         if product in ["Asset Backed Loan", "Term Loan", "Export Finance"]:
             # Fund-based product calculations
             monthly_rate = rate_avg / 1200
             emi = exposure * monthly_rate * (1 + monthly_rate)**tenor / ((1 + monthly_rate)**tenor - 1)
             emi_str = f"{emi:,.2f}"
-            
-            # Simplified NII calculation (annualized)
             avg_balance = exposure * 0.55  # Approximation
-            nim_pct = rate_avg + fee_yield - funding_cost - credit_cost - opex
             nii = (nim_pct / 100) * avg_balance
             optimal_util = "–"
         else:
@@ -181,16 +213,13 @@ def calculate_pricing(
             emi_str = "–"
             util = UTILIZATION_FACTORS.get(industry, 0.5)
             avg_balance = exposure * util
-            nim_pct = rate_avg + fee_yield - funding_cost - credit_cost - opex
             nii = (nim_pct / 100) * avg_balance
-            
-            # Simplified optimal utilization calculation
-            optimal_util = f"{int(util * 100)}%" if util else "–"
+            optimal_util = f"{int(util * 100)}%"
         
         # Breakeven calculation
         setup_cost = 0.005 * exposure
         if nim_pct > 0:
-            monthly_margin = nii / min(tenor, 12)
+            monthly_margin = (nim_pct / 100 / 12) * avg_balance
             breakeven_months = np.ceil(setup_cost / monthly_margin)
             breakeven = str(int(breakeven_months)) if breakeven_months <= tenor else "Not within tenor"
         else:
@@ -210,6 +239,45 @@ def calculate_pricing(
         })
     
     return results
+
+def validate_inputs(product: str, ltv: Optional[float], working_capital: Optional[float], sales: Optional[float]) -> None:
+    """Validate all required input parameters"""
+    if product in ["Asset Backed Loan", "Term Loan", "Export Finance"] and ltv is None:
+        st.error("LTV is required for fund-based products")
+        st.stop()
+        
+    if product not in ["Asset Backed Loan", "Term Loan", "Export Finance"]:
+        if working_capital is None or sales is None or working_capital <= 0 or sales <= 0:
+            st.error("Working Capital and Sales must be positive for utilization products")
+            st.stop()
+
+def display_results(pricing_results: List[Dict], malaa_score: int, industry: str, product: str) -> None:
+    """Display all calculation results"""
+    st.subheader("Risk Profile")
+    borrower_level, industry_level, product_level = get_risk_levels(malaa_score, industry, product)
+    cols = st.columns(3)
+    cols[0].metric("Borrower Risk", borrower_level)
+    cols[1].metric("Industry Risk", industry_level)
+    cols[2].metric("Product Risk", product_level)
+    
+    st.subheader("Pricing Results")
+    df = pd.DataFrame(pricing_results).set_index("Bucket")
+    
+    st.dataframe(
+        df,
+        use_container_width=True,
+        column_config={
+            "Float_Min_over_OIBOR_bps": st.column_config.NumberColumn("Min Spread (bps)", format="%d"),
+            "Float_Max_over_OIBOR_bps": st.column_config.NumberColumn("Max Spread (bps)", format="%d"),
+            "Rate_Min_%": "Min Rate",
+            "Rate_Max_%": "Max Rate",
+            "EMI_OMR": "EMI",
+            "Net_Interest_Income_OMR": "Net Interest Income",
+            "NIM_%": "NIM",
+            "Breakeven_Months": "Breakeven Period",
+            "Optimal_Utilization_%": "Optimal Utilization"
+        }
+    )
 
 def main():
     """Main application function"""
@@ -247,14 +315,7 @@ def main():
             st.markdown('<div class="main-container">', unsafe_allow_html=True)
             
             # Input validation
-            if product in ["Asset Backed Loan", "Term Loan", "Export Finance"] and ltv is None:
-                st.error("LTV is required for fund-based products")
-                st.stop()
-                
-            if product not in ["Asset Backed Loan", "Term Loan", "Export Finance"]:
-                if working_capital is None or sales is None or working_capital <= 0 or sales <= 0:
-                    st.error("Working Capital and Sales must be positive for utilization products")
-                    st.stop()
+            validate_inputs(product, ltv, working_capital, sales)
             
             # Calculate risk score and pricing
             risk_score = calculate_risk_score(
@@ -274,39 +335,13 @@ def main():
                 cost_of_funds_pct=funding_cost,
                 target_nim_pct=target_nim,
                 product=product,
-                industry=industry,  # Pass industry to the pricing function
+                industry=industry,
                 working_capital=working_capital,
                 sales=sales
             )
             
-            # Display risk profile cards
-            borrower_level, industry_level, product_level = get_risk_levels(malaa_score, industry, product)
-            
-            st.subheader("Risk Profile")
-            cols = st.columns(3)
-            cols[0].metric("Borrower Risk", borrower_level)
-            cols[1].metric("Industry Risk", industry_level)
-            cols[2].metric("Product Risk", product_level)
-            
-            # Display pricing results
-            st.subheader("Pricing Results")
-            df = pd.DataFrame(pricing).set_index("Bucket")
-            
-            st.dataframe(
-                df,
-                use_container_width=True,
-                column_config={
-                    "Float_Min_over_OIBOR_bps": st.column_config.NumberColumn("Min Spread (bps)", format="%d"),
-                    "Float_Max_over_OIBOR_bps": st.column_config.NumberColumn("Max Spread (bps)", format="%d"),
-                    "Rate_Min_%": "Min Rate",
-                    "Rate_Max_%": "Max Rate",
-                    "EMI_OMR": "EMI",
-                    "Net_Interest_Income_OMR": "Net Interest Income",
-                    "NIM_%": "NIM",
-                    "Breakeven_Months": "Breakeven Period",
-                    "Optimal_Utilization_%": "Optimal Utilization"
-                }
-            )
+            # Display results
+            display_results(pricing, malaa_score, industry, product)
             
             st.markdown('</div>', unsafe_allow_html=True)
 
