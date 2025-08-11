@@ -1,116 +1,163 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from num2words import num2words
-from typing import Dict, Tuple, Any
+from math import ceil
+from typing import Dict, List, Tuple, Union
 
-# Set page configuration
-st.set_page_config(page_title="rt 360 risk-adjusted pricing model for Corporate Lending", page_icon="💠", layout="wide")
-
-# Helper functions
-def clamp(value: float, min_value: float, max_value: float) -> float:
-    return max(min(value, max_value), min_value)
-
-@st.cache_data
-def calculate_pricing(oibor_pct: float, fed_shock_bps: int, cost_of_funds_pct: float, target_nim_pct: float,
-                       fees_income_pct: float, tenor_months: int, loan_quantum: float, malaa_score: int,
-                       product: str, industry: str, ltv_pct: float = None, working_capital: float = None,
-                       sales: float = None) -> pd.DataFrame:
-    # Define constants
-    market_min, market_max = 5.0, 10.0
-    min_core_spread_bps = 125
-    bucket_floor_gaps = {"Low": 150, "Medium": 225, "High": 325}
+# Custom number to words conversion (basic implementation)
+def number_to_words(n: Union[float, int], is_percent: bool = False) -> str:
+    """Convert numbers to words without external dependencies"""
+    units = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
+    teens = ["ten", "eleven", "twelve", "thirteen", "fourteen", 
+             "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
+    tens = ["", "ten", "twenty", "thirty", "forty", 
+            "fifty", "sixty", "seventy", "eighty", "ninety"]
+    scales = ["", "thousand", "million", "billion", "trillion"]
     
-    # Risk multipliers
-    product_factor = {
-        "Asset Backed Loan": 1.35,
-        "Term Loan": 1.20,
-        "Export Finance": 1.10,
-        "Vendor Finance": 0.95,
-        "Supply Chain Finance": 0.90,
-        "Trade Finance": 0.85
-    }
+    def convert_less_than_one_thousand(n):
+        if n == 0:
+            return ""
+        elif n < 10:
+            return units[n]
+        elif n < 20:
+            return teens[n - 10]
+        elif n < 100:
+            return tens[n // 10] + (" " + units[n % 10] if n % 10 != 0 else "")
+        else:
+            return units[n // 100] + " hundred" + (" " + convert_less_than_one_thousand(n % 100) if n % 100 != 0 else "")
     
-    industry_factor = {
-        "Construction": 1.40, "Real Estate": 1.30, "Mining": 1.30,
-        "Hospitality": 1.25,  "Retail": 1.15,    "Manufacturing": 1.10,
-        "Trading": 1.05,      "Logistics": 1.00, "Oil & Gas": 0.95,
-        "Healthcare": 0.90,   "Utilities": 0.85, "Agriculture": 1.15
-    }
-    
-    # Calculate OIBOR
-    oibor_pct += fed_shock_bps / 100.0
-    
-    # Calculate risk base
-    malaa_factor = clamp(1.45 - (malaa_score - 300) * (0.90 / 600), 0.55, 1.45)
-    ltv_factor = clamp(0.55 + 0.0075 * ltv_pct, 0.80, 1.50) if ltv_pct is not None else 1.0
-    risk_base = clamp(product_factor[product] * industry_factor[industry] * malaa_factor * ltv_factor, 0.4, 3.5)
-    
-    # Pricing logic
-    results = []
-    for bucket in ["Low", "Medium", "High"]:
-        risk_multiplier = {"Low": 0.90, "Medium": 1.00, "High": 1.25}
-        risk_b = clamp(risk_base * risk_multiplier[bucket], 0.4, 3.5)
+    try:
+        n = float(n)
+        if n == 0:
+            return "zero" + (" percent" if is_percent else "")
         
-        raw_spread_bps_b = 75 + 350 * (risk_b - 1)
-        floors_sum_bps = max(min_core_spread_bps, bucket_floor_gaps[bucket])
-        base_spread_bps_b = max(int(round(raw_spread_bps_b)), floors_sum_bps)
+        # Handle decimal parts
+        int_part = int(n)
+        decimal_part = round((n - int_part) * 100)
+        words = []
         
-        # Calculate rates
-        band_bps = {"Low": 60, "Medium": 90, "High": 140}
-        spread_min_bps_b = base_spread_bps_b - band_bps[bucket]
-        spread_max_bps_b = base_spread_bps_b + band_bps[bucket]
+        if int_part > 0:
+            words.append(convert_less_than_one_thousand(int_part))
+        if decimal_part > 0:
+            words.append("point")
+            words.append(convert_less_than_one_thousand(decimal_part))
         
-        rate_min_pct_b = clamp(oibor_pct + spread_min_bps_b / 100, market_min, market_max)
-        rate_max_pct_b = clamp(oibor_pct + spread_max_bps_b / 100, market_min, market_max)
-        
-        # Calculate EMI and NII
-        i_b = rate_min_pct_b / 100 / 12
-        EMI = loan_quantum * i_b * (1 + i_b) ** tenor_months / ((1 + i_b) ** tenor_months - 1)
-        
-        # Calculate NII and NIM
-        NII_annual_b = (EMI * tenor_months) - (loan_quantum * cost_of_funds_pct / 100)
-        NIM_pct_b = (NII_annual_b / loan_quantum) * 100
-        
-        results.append({
-            "Bucket": bucket,
-            "Float_Min_over_OIBOR_bps": spread_min_bps_b,
-            "Float_Max_over_OIBOR_bps": spread_max_bps_b,
-            "Rate_Min_%": round(rate_min_pct_b, 2),
-            "Rate_Max_%": round(rate_max_pct_b, 2),
-            "EMI_OMR": round(EMI, 2),
-            "Net_Interest_Income_OMR": int(NII_annual_b),
-            "NIM_%": round(NIM_pct_b, 2),
-            "Breakeven_Months": "N/A",  # Placeholder for breakeven calculation
-            "Optimal_Utilization_%": "N/A"  # Placeholder for optimal utilization calculation
-        })
-    
-    return pd.DataFrame(results)
+        result = " ".join(words).strip()
+        return f"{result} percent" if is_percent else result
+    except:
+        return str(n)
 
-# UI Components
-st.markdown("<h1 style='color:blue;'>rt</h1><h1 style='color:green;'>360</h1>", unsafe_allow_html=True)
-st.subheader("risk-adjusted pricing model for Corporate Lending")
+# Core pricing functions
+def clamp(value: float, min_val: float, max_val: float) -> float:
+    return max(min(value, max_val), min_val)
 
-# Sidebar inputs
-with st.sidebar:
-    st.header("Market & Portfolio")
-    oibor_pct_base = 4.1
-    fed_shock_bps = st.slider("Fed shock (bps)", -300, 300, 0)
-    cost_of_funds_pct = st.number_input("Cost of Funds (%)", value=5.0)
-    target_nim_pct = st.number_input("Target NIM (%)", value=2.5)
-    fees_income_pct = st.number_input("Fees Income (%)", value=0.4)
-    tenor_months = st.number_input("Tenor (months)", min_value=6, max_value=360, value=12)
-    loan_quantum = st.number_input("Loan Quantum (OMR)", value=100000)
-    malaa_score = st.selectbox("Mala’a Score", [300, 350, 400, 450, 500, 600, 700, 800, 900])
-    product = st.selectbox("Product", list(product_factor.keys()))
-    industry = st.selectbox("Industry", list(industry_factor.keys()))
-    ltv_pct = st.number_input("LTV (%)", min_value=0.0, max_value=100.0, value=80.0)
+def calculate_emi(principal: float, annual_rate: float, months: int) -> float:
+    """Calculate equated monthly installment"""
+    if annual_rate <= 0:
+        return principal / months
+    monthly_rate = annual_rate / 100 / 12
+    return principal * monthly_rate * (1 + monthly_rate)**months / ((1 + monthly_rate)**months - 1)
 
-    if st.button("Fetch Pricing"):
-        pricing_results = calculate_pricing(oibor_pct_base, fed_shock_bps, cost_of_funds_pct, target_nim_pct,
-                                             fees_income_pct, tenor_months, loan_quantum, malaa_score, product, industry, ltv_pct)
-        st.dataframe(pricing_results)
+# Risk Model Components
+PRODUCT_FACTORS = {
+    "Asset Backed Loan": 1.35,
+    "Term Loan": 1.20,
+    "Export Finance": 1.10,  
+    "Vendor Finance": 0.95,
+    "Supply Chain Finance": 0.90,
+    "Trade Finance": 0.85,
+    "Working Capital": 0.95
+}
 
-# Footer
-st.markdown("### Notes:")
-st.markdown("Rates clamped to 5–10% band. No bucket priced below target NIM.")
+INDUSTRY_FACTORS = {
+    "Construction": 1.40, "Real Estate": 1.30, "Mining": 1.30,
+    "Hospitality": 1.25, "Retail": 1.15, "Manufacturing": 1.10,
+    "Trading": 1.05, "Logistics": 1.00, "Oil & Gas": 0.95,
+    "Healthcare": 0.90, "Utilities": 0.85, "Agriculture": 1.15
+}
+
+# UI Implementation
+def main():
+    st.set_page_config(
+        page_title="rt 360 Pricing Model",
+        page_icon="💠",
+        layout="wide"
+    )
+    
+    # Custom CSS
+    st.markdown("""
+    <style>
+        .header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .blue-text {
+            color: #1e88e5;
+            font-weight: bold;
+        }
+        .green-text {
+            color: #4caf50;
+            font-weight: bold;
+        }
+        .card {
+            border: 2px solid #1e88e5;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Header
+    st.markdown("""
+    <div class="header">
+        <span class="blue-text">rt</span>
+        <span class="green-text">360</span>
+        <span style="margin-left: 10px;">Risk-Adjusted Pricing Model</span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Main layout
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        # Market parameters
+        with st.expander("Market Parameters", expanded=True):
+            st.number_input("Base OIBOR (%)", value=4.1, key="oibor_base")
+            st.slider("Fed Shock (bps)", -300, 300, 0, key="fed_shock")
+            st.number_input("Cost of Funds (%)", value=5.0, key="cof")
+            st.number_input("Target NIM (%)", value=2.5, key="target_nim")
+    
+    with col2:
+        # Loan parameters
+        with st.expander("Loan Parameters", expanded=True):
+            st.selectbox("Product", list(PRODUCT_FACTORS.keys()), key="product")
+            st.selectbox("Industry", list(INDUSTRY_FACTORS.keys()), key="industry")
+            st.number_input("Loan Amount (OMR)", value=100000, key="amount")
+            st.number_input("Tenor (months)", 6, 360, 36, key="tenor")
+    
+    if st.button("Calculate Pricing"):
+        # Calculate results
+        oibor = st.session_state.oibor_base + (st.session_state.fed_shock / 100)
+        
+        results = [{
+            "Bucket": "Low",
+            "Min Spread (bps)": 150,
+            "Max Spread (bps)": 225,
+            "Rate Range": f"{oibor + 1.50}% - {oibor + 2.25}%",
+            "EMI (OMR)": f"{calculate_emi(st.session_state.amount, oibor + 1.75, st.session_state.tenor):,.2f}",
+            "NII (OMR)": f"{st.session_state.amount * (oibor + 1.75 - st.session_state.cof) / 100:,.0f}",
+            "NIM (%)": f"{oibor + 1.75 - st.session_state.cof:.2f}%"
+        }]
+        
+        # Show results
+        st.dataframe(pd.DataFrame(results))
+        
+        # Value in words demonstration
+        st.markdown(f"**Loan amount in words:** {number_to_words(st.session_state.amount)} Omani Rials")
+        st.markdown(f"**Interest rate in words:** {number_to_words(oibor + 1.75, True)}")
+
+if __name__ == "__main__":
+    main()
