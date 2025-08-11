@@ -1,157 +1,169 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from typing import Dict, Any, List
-from math import ceil
+from math import ceil, pow
+from typing import Dict, Any, List, Optional
+from datetime import datetime
 
 # Handle num2words import gracefully
 try:
     from num2words import num2words
 except ImportError:
     def num2words(x, to="cardinal", lang="en"):
-        # Very simple fallback for integers & 2-decimal floats
-        s = f"{x:,.2f}" if isinstance(x, float) else f"{x:,}"
-        return s.replace(",", " ").strip()
+        return str(x)  # Fallback to simple number display
 
-# Set page configuration
-st.set_page_config(page_title="rt 360 Risk-Adjusted Pricing Model", page_icon="💠", layout="wide")
+# --- Core Calculation Functions ---
+def calculate_emi(principal: float, annual_rate: float, months: int) -> float:
+    """Calculate Equated Monthly Installment (EMI)"""
+    if annual_rate == 0:
+        return principal / months
+    monthly_rate = annual_rate / 100 / 12
+    return principal * monthly_rate * pow(1 + monthly_rate, months) / (pow(1 + monthly_rate, months) - 1)
 
-# CSS for styling
-st.markdown("""
-<style>
-    .header {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        margin-bottom: 20px;
-    }
-    .blue-text {
-        color: #1e88e5;
-        font-weight: bold;
-        font-size: 2em;
-    }
-    .green-text {
-        color: #4caf50;
-        font-weight: bold;
-        font-size: 2em;
-    }
-    .card {
-        border: 2px solid #1e88e5;
-        border-radius: 10px;
-        padding: 20px;
-        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-        background-color: white;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# --- Helper Functions ---
-def clamp(value: float, min_val: float, max_val: float) -> float:
-    return max(min(value, max_val), min_val)
-
-def calculate_malaa_factor(score: int) -> float:
-    return float(clamp(1.45 - (score - 300) * (0.90 / 600), 0.55, 1.45))
-
-def calculate_ltv_factor(ltv_pct: float) -> float:
-    return float(clamp(0.55 + 0.0075 * ltv_pct, 0.80, 1.50))
-
-def calculate_wcs_factor(wc: float, sales: float) -> float:
-    if sales <= 0:
-        return 1.20
-    ratio = wc / sales
-    return float(clamp(0.70 + 1.00 * min(ratio, 1.2), 0.70, 1.70))
-
-def calculate_util_factor(u_med: float) -> float:
-    return float(clamp(1 - 0.30 * (0.8 - u_med), 0.70, 1.30))
-
-def calculate_risk_base(product_factor: float, industry_factor: float, malaa_factor: float, ltv_factor: float) -> float:
-    return clamp(product_factor * industry_factor * malaa_factor * ltv_factor, 0.4, 3.5)
-
-# --- Main Application ---
-def main():
-    st.title("rt 360 Risk-Adjusted Pricing Model")
+def calculate_nii(
+    loan_amount: float,
+    rate_pct: float,
+    cost_of_funds_pct: float,
+    tenor_months: int,
+    fees_pct: float = 0.0
+) -> Dict[str, float]:
+    """Calculate Net Interest Income and Margin"""
+    monthly_rate = rate_pct / 100 / 12
+    cof_monthly = cost_of_funds_pct / 100 / 12
+    balance = loan_amount
+    total_nii = 0.0
     
-    # Sidebar for inputs
+    for _ in range(min(12, tenor_months)):
+        interest = balance * monthly_rate
+        funding_cost = balance * cof_monthly
+        fee_income = loan_amount * fees_pct / 100 / 12
+        total_nii += (interest + fee_income - funding_cost)
+        principal = calculate_emi(loan_amount, rate_pct, tenor_months) - interest
+        balance = max(balance - principal, 0)
+    
+    avg_balance = loan_amount * min(12, tenor_months) / 12
+    nim_pct = (total_nii / avg_balance) * 100 if avg_balance > 0 else 0
+    
+    return {
+        "nii": total_nii,
+        "nim": nim_pct,
+        "avg_balance": avg_balance
+    }
+
+# --- Risk Model Functions ---
+def get_risk_factors() -> Dict[str, Dict]:
+    return {
+        "product": {
+            "Asset Backed Loan": 1.35,
+            "Term Loan": 1.20,
+            "Export Finance": 1.10,
+            "Vendor Finance": 0.95,
+            "Supply Chain Finance": 0.90,
+            "Trade Finance": 0.85
+        },
+        "industry": {
+            "Construction": 1.40, "Real Estate": 1.30, "Mining": 1.30,
+            "Hospitality": 1.25, "Retail": 1.15, "Manufacturing": 1.10,
+            "Trading": 1.05, "Logistics": 1.00, "Oil & Gas": 0.95,
+            "Healthcare": 0.90, "Utilities": 0.85, "Agriculture": 1.15
+        }
+    }
+
+# --- UI Components ---
+def display_header():
+    st.markdown("""
+    <style>
+        .header-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+        .rt-text {
+            color: #1e88e5;
+            font-weight: bold;
+            font-size: 2.5rem;
+        }
+        .360-text {
+            color: #4caf50;
+            font-weight: bold;
+            font-size: 2.5rem;
+        }
+    </style>
+    <div class="header-container">
+        <span class="rt-text">rt</span>
+        <span class="360-text">360</span>
+    </div>
+    <h3 style="text-align: center;">Risk-Adjusted Pricing Model for Corporate Lending</h3>
+    """, unsafe_allow_html=True)
+
+def main():
+    # Page configuration
+    st.set_page_config(
+        page_title="rt 360 Risk-Adjusted Pricing Model",
+        page_icon="💠",
+        layout="wide"
+    )
+    
+    # Display header
+    display_header()
+    
+    # Initialize session state
+    if 'calculated' not in st.session_state:
+        st.session_state.calculated = False
+    
+    # Sidebar inputs
     with st.sidebar:
-        st.header("Market & Portfolio")
-        oibor_pct_base = 4.1
-        fed_shock_bps = st.slider("Fed Shock (bps)", -300, 300, 0)
-        oibor_pct = oibor_pct_base + fed_shock_bps / 100
-        st.write(f"OIBOR: {oibor_pct:.2f}%")
+        st.header("Market Parameters")
+        oibor_base = 4.1
+        fed_shock = st.slider("Fed Shock (bps)", -300, 300, 0, 
+                             help="Impact on base OIBOR rate")
+        oibor = oibor_base + (fed_shock / 100)
+        st.metric("Effective OIBOR", f"{oibor:.2f}%")
         
-        cost_of_funds_pct = st.number_input("Cost of Funds (%)", value=5.0)
-        target_nim_pct = st.number_input("Target NIM (%)", value=2.5)
-        fees_income_pct = st.number_input("Fees Income (%)", value=0.4)
-        opex_pct = st.number_input("Opex (%)", value=0.40)
-        upfront_cost_pct = st.number_input("Upfront Cost (%)", value=0.50)
-
-        st.header("Borrower & Product")
-        product = st.selectbox("Product", ["Asset Backed Loan", "Term Loan", "Export Finance", 
-                                             "Working Capital", "Trade Finance", "Supply Chain Finance", "Vendor Finance"])
-        industry = st.selectbox("Industry", ["Oil & Gas", "Construction", "Real Estate", "Manufacturing", 
-                                               "Trading", "Logistics", "Healthcare", "Hospitality", 
-                                               "Retail", "Mining", "Utilities", "Agriculture"])
-        malaa_score = st.selectbox("Mala’a Score", [300, 350, 400, 450, 500, 600, 700, 800, 900])
-        tenor_months = st.number_input("Tenor (months)", min_value=6, max_value=360, value=12)
-        loan_quantum = st.number_input("Loan Quantum (OMR)", value=100000)
-        ltv_pct = st.number_input("LTV (%)", min_value=0.0, max_value=100.0, value=80.0)
-
-        st.header("Loan Book Upload")
-        uploaded_file = st.file_uploader("Upload Loan Book CSV", type=["csv"])
-        if uploaded_file is not None:
-            loan_book_df = pd.read_csv(uploaded_file)
-            st.write(loan_book_df)
-
-        if st.button("Fetch Pricing"):
-            # Pricing logic here
-            product_factor = {
-                "Asset Backed Loan": 1.35,
-                "Term Loan": 1.20,
-                "Export Finance": 1.10,
-                "Vendor Finance": 0.95,
-                "Supply Chain Finance": 0.90,
-                "Trade Finance": 0.85
-            }[product]
-
-            industry_factor = {
-                "Construction": 1.40, "Real Estate": 1.30, "Mining": 1.30,
-                "Hospitality": 1.25, "Retail": 1.15, "Manufacturing": 1.10,
-                "Trading": 1.05, "Logistics": 1.00, "Oil & Gas": 0.95,
-                "Healthcare": 0.90, "Utilities": 0.85, "Agriculture": 1.15
-            }[industry]
-
-            malaa_factor_value = calculate_malaa_factor(malaa_score)
-            ltv_factor_value = calculate_ltv_factor(ltv_pct)
-
-            risk_base = calculate_risk_base(product_factor, industry_factor, malaa_factor_value, ltv_factor_value)
-
-            # Calculate pricing buckets
-            results = []
-            for bucket in ["Low", "Medium", "High"]:
-                risk_multiplier = {"Low": 0.90, "Medium": 1.00, "High": 1.25}[bucket]
-                risk_b = clamp(risk_base * risk_multiplier, 0.4, 3.5)
-                raw_spread = 75 + 350 * (risk_b - 1)
-                base_spread_bps = max(int(round(raw_spread)), 125)  # Example floor
-                spread_min_bps = max(base_spread_bps - 60, 125)
-                spread_max_bps = base_spread_bps + 60
-
-                rate_min_pct = clamp(oibor_pct + spread_min_bps / 100, 5.0, 10.0)
-                rate_max_pct = clamp(oibor_pct + spread_max_bps / 100, 5.0, 10.0)
-
-                EMI = calculate_emi(loan_quantum, (rate_min_pct + rate_max_pct) / 2, tenor_months)
-
-                results.append({
-                    "Bucket": bucket,
-                    "Float_Min_over_OIBOR_bps": spread_min_bps,
-                    "Float_Max_over_OIBOR_bps": spread_max_bps,
-                    "Rate_Min_%": round(rate_min_pct, 2),
-                    "Rate_Max_%": round(rate_max_pct, 2),
-                    "EMI_OMR": round(EMI, 2)
-                })
-
-            # Display results
-            results_df = pd.DataFrame(results)
-            st.write(results_df)
+        cost_of_funds = st.number_input("Cost of Funds (%)", value=5.0, min_value=0.0)
+        target_nim = st.number_input("Target NIM (%)", value=2.5, min_value=0.0)
+        
+        st.header("Loan Parameters")
+        product = st.selectbox("Product", list(get_risk_factors()["product"].keys()))
+        industry = st.selectbox("Industry", list(get_risk_factors()["industry"].keys()))
+        tenor = st.number_input("Tenor (months)", min_value=6, max_value=360, value=36)
+        amount = st.number_input("Loan Amount (OMR)", min_value=0.0, value=1000000.0)
+        st.caption(f"In words: {num2words(amount)} Omani Rials")
+        
+        if st.button("Calculate Pricing", type="primary"):
+            st.session_state.calculated = True
+            st.session_state.calculation_time = datetime.now()
+    
+    # Main content area
+    if st.session_state.get('calculated', False):
+        with st.spinner("Calculating pricing..."):
+            try:
+                # Example calculation (simplified)
+                example_rate = oibor + 1.25  # Simplified for demo
+                emi = calculate_emi(amount, example_rate, tenor)
+                nii_data = calculate_nii(amount, example_rate, cost_of_funds, tenor)
+                
+                # Display results in a card
+                with st.container():
+                    st.markdown("### Pricing Results")
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.metric("Repayment Rate", f"{example_rate:.2f}%")
+                        st.metric("EMI", f"OMR {emi:,.2f}")
+                    
+                    with col2:
+                        st.metric("Annual NII", f"OMR {nii_data['nii']:,.0f}")
+                        st.metric("NIM", f"{nii_data['nim']:.2f}%")
+                
+                st.success("Calculation completed successfully!")
+                st.toast(f"Calculated at {st.session_state.calculation_time:%H:%M:%S}", icon="🕒")
+                
+            except Exception as e:
+                st.error(f"Error in calculation: {str(e)}")
+    else:
+        st.info("Please configure parameters and click 'Calculate Pricing'")
 
 if __name__ == "__main__":
     main()
