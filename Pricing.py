@@ -414,9 +414,44 @@ with st.container():
                 mime="text/csv"
             )
         
+        # [Previous code remains exactly the same until the Test Scenarios section]
+
         # Test scenarios
         with st.expander("Test Scenarios"):
+            # Define test scenarios with proper formatting
             scenarios = {
                 "Low Risk": {
                     "product": "Trade Finance",
-                    "industry":
+                    "industry": "Utilities", 
+                    "malaa_score": 850,
+                    "working_capital": 500000.0,
+                    "sales": 2000000.0,
+                    "ltv": None
+                },
+                "Medium Risk": {
+                    "product": "Term Loan",
+                    "industry": "Manufacturing",
+                    "malaa_score": 700,
+                    "ltv": 70.0,
+                    "working_capital": None,
+                    "sales": None
+                },
+                "High Risk": {
+                    "product": "Asset Backed Loan",
+                    "industry": "Construction",
+                    "malaa_score": 400,
+                    "ltv": 85.0,
+                    "working_capital": None,
+                    "sales": None
+                }
+            }
+
+            cols = st.columns(3)
+            for i, (name, params) in enumerate(scenarios.items()):
+                with cols[i]:
+                    if st.button(f"Load {name}"):
+                        # Safely update session state
+                        for key, value in params.items():
+                            if value is not None:  # Only update non-None values
+                                st.session_state[key] = value
+
