@@ -1,169 +1,128 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from math import ceil, pow
-from typing import Dict, Any, List, Optional
-from datetime import datetime
 
-# Handle num2words import gracefully
-try:
-    from num2words import num2words
-except ImportError:
-    def num2words(x, to="cardinal", lang="en"):
-        return str(x)  # Fallback to simple number display
-
-# --- Core Calculation Functions ---
-def calculate_emi(principal: float, annual_rate: float, months: int) -> float:
-    """Calculate Equated Monthly Installment (EMI)"""
-    if annual_rate == 0:
-        return principal / months
-    monthly_rate = annual_rate / 100 / 12
-    return principal * monthly_rate * pow(1 + monthly_rate, months) / (pow(1 + monthly_rate, months) - 1)
-
-def calculate_nii(
-    loan_amount: float,
-    rate_pct: float,
-    cost_of_funds_pct: float,
-    tenor_months: int,
-    fees_pct: float = 0.0
-) -> Dict[str, float]:
-    """Calculate Net Interest Income and Margin"""
-    monthly_rate = rate_pct / 100 / 12
-    cof_monthly = cost_of_funds_pct / 100 / 12
-    balance = loan_amount
-    total_nii = 0.0
+# --- Number to Words Function ---
+def num_to_words(n):
+    units = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
+    teens = ["ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
+    tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
     
-    for _ in range(min(12, tenor_months)):
-        interest = balance * monthly_rate
-        funding_cost = balance * cof_monthly
-        fee_income = loan_amount * fees_pct / 100 / 12
-        total_nii += (interest + fee_income - funding_cost)
-        principal = calculate_emi(loan_amount, rate_pct, tenor_months) - interest
-        balance = max(balance - principal, 0)
-    
-    avg_balance = loan_amount * min(12, tenor_months) / 12
-    nim_pct = (total_nii / avg_balance) * 100 if avg_balance > 0 else 0
-    
-    return {
-        "nii": total_nii,
-        "nim": nim_pct,
-        "avg_balance": avg_balance
-    }
+    if n < 10: return units[n]
+    elif n < 20: return teens[n - 10]
+    elif n < 100: return tens[n // 10] + (" " + units[n % 10] if n % 10 != 0 else "")
+    elif n < 1000: return units[n // 100] + " hundred" + (" " + num_to_words(n % 100) if n % 100 != 0 else "")
+    else:
+        for div, word in [(10**9, "billion"), (10**6, "million"), (10**3, "thousand")]:
+            if n >= div:
+                return num_to_words(n // div) + " " + word + (" " + num_to_words(n % div) if n % div != 0 else "")
 
 # --- Risk Model Functions ---
-def get_risk_factors() -> Dict[str, Dict]:
-    return {
-        "product": {
-            "Asset Backed Loan": 1.35,
-            "Term Loan": 1.20,
-            "Export Finance": 1.10,
-            "Vendor Finance": 0.95,
-            "Supply Chain Finance": 0.90,
-            "Trade Finance": 0.85
-        },
-        "industry": {
-            "Construction": 1.40, "Real Estate": 1.30, "Mining": 1.30,
-            "Hospitality": 1.25, "Retail": 1.15, "Manufacturing": 1.10,
-            "Trading": 1.05, "Logistics": 1.00, "Oil & Gas": 0.95,
-            "Healthcare": 0.90, "Utilities": 0.85, "Agriculture": 1.15
-        }
-    }
+def malaa_factor(score):
+    return max(min(1.45 - (score - 300) * (0.9 / 600), 1.45), 0.55)
 
-# --- UI Components ---
-def display_header():
+def ltv_factor(ltv_pct):
+    return max(min(0.55 + 0.0075 * ltv_pct, 1.50), 0.80)
+
+def wcs_factor(wc, sales):
+    if sales <= 0:
+        return 1.20
+    ratio = wc / sales
+    return max(min(0.70 + 1.00 * min(ratio, 1.2), 1.70), 0.70)
+
+# --- Spread Calculation ---
+def calculate_spread(risk_score, product, industry):
+    base_spread = 125 + (risk_score - 1) * 350
+    if industry_factor[industry] >= 1.25:
+        base_spread += 50
+    if product == "Asset Backed Loan":
+        base_spread += 75
+    elif product in ["Term Loan", "Export Finance"]:
+        base_spread += 50
+    return base_spread
+
+# --- Main Application ---
+def main():
+    st.set_page_config(page_title="rt 360 Risk-Adjusted Pricing Model", layout="wide")
+
+    # Header
     st.markdown("""
-    <style>
-        .header-container {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 20px;
-        }
-        .rt-text {
-            color: #1e88e5;
-            font-weight: bold;
-            font-size: 2.5rem;
-        }
-        .360-text {
-            color: #4caf50;
-            font-weight: bold;
-            font-size: 2.5rem;
-        }
-    </style>
-    <div class="header-container">
-        <span class="rt-text">rt</span>
-        <span class="360-text">360</span>
-    </div>
-    <h3 style="text-align: center;">Risk-Adjusted Pricing Model for Corporate Lending</h3>
+    <h1 style="color:blue; display:inline;">rt</h1>
+    <h1 style="color:green; display:inline;">360</h1>
+    <h3>Risk-adjusted pricing model for Corporate Lending</h3>
     """, unsafe_allow_html=True)
 
-def main():
-    # Page configuration
-    st.set_page_config(
-        page_title="rt 360 Risk-Adjusted Pricing Model",
-        page_icon="💠",
-        layout="wide"
-    )
-    
-    # Display header
-    display_header()
-    
-    # Initialize session state
-    if 'calculated' not in st.session_state:
-        st.session_state.calculated = False
-    
-    # Sidebar inputs
+    # Sidebar Inputs
     with st.sidebar:
-        st.header("Market Parameters")
-        oibor_base = 4.1
-        fed_shock = st.slider("Fed Shock (bps)", -300, 300, 0, 
-                             help="Impact on base OIBOR rate")
-        oibor = oibor_base + (fed_shock / 100)
-        st.metric("Effective OIBOR", f"{oibor:.2f}%")
+        st.header("Loan Details")
+        loan_amount = st.number_input("Loan Quantum (OMR)", min_value=0.0, value=1000000.0)
+        st.caption(f"In words: {num_to_words(int(loan_amount))} Omani Rials")
         
-        cost_of_funds = st.number_input("Cost of Funds (%)", value=5.0, min_value=0.0)
-        target_nim = st.number_input("Target NIM (%)", value=2.5, min_value=0.0)
+        loan_tenor = st.number_input("Loan Tenor (months)", min_value=6, max_value=360, value=12)
+        loan_type = st.selectbox("Loan Type", ["Asset Backed Loan", "Term Loan", "Export Finance", 
+                                                "Working Capital", "Trade Finance", "Supply Chain Finance", "Vendor Finance"])
         
-        st.header("Loan Parameters")
-        product = st.selectbox("Product", list(get_risk_factors()["product"].keys()))
-        industry = st.selectbox("Industry", list(get_risk_factors()["industry"].keys()))
-        tenor = st.number_input("Tenor (months)", min_value=6, max_value=360, value=36)
-        amount = st.number_input("Loan Amount (OMR)", min_value=0.0, value=1000000.0)
-        st.caption(f"In words: {num2words(amount)} Omani Rials")
-        
-        if st.button("Calculate Pricing", type="primary"):
-            st.session_state.calculated = True
-            st.session_state.calculation_time = datetime.now()
-    
-    # Main content area
-    if st.session_state.get('calculated', False):
-        with st.spinner("Calculating pricing..."):
-            try:
-                # Example calculation (simplified)
-                example_rate = oibor + 1.25  # Simplified for demo
-                emi = calculate_emi(amount, example_rate, tenor)
-                nii_data = calculate_nii(amount, example_rate, cost_of_funds, tenor)
-                
-                # Display results in a card
-                with st.container():
-                    st.markdown("### Pricing Results")
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.metric("Repayment Rate", f"{example_rate:.2f}%")
-                        st.metric("EMI", f"OMR {emi:,.2f}")
-                    
-                    with col2:
-                        st.metric("Annual NII", f"OMR {nii_data['nii']:,.0f}")
-                        st.metric("NIM", f"{nii_data['nim']:.2f}%")
-                
-                st.success("Calculation completed successfully!")
-                st.toast(f"Calculated at {st.session_state.calculation_time:%H:%M:%S}", icon="🕒")
-                
-            except Exception as e:
-                st.error(f"Error in calculation: {str(e)}")
-    else:
-        st.info("Please configure parameters and click 'Calculate Pricing'")
+        if loan_type in ["Working Capital", "Supply Chain Finance", "Vendor Finance", "Trade Finance"]:
+            working_capital = st.number_input("Working Capital (OMR)", min_value=0.0, value=50000.0)
+            st.caption(f"In words: {num_to_words(int(working_capital))} Omani Rials")
+            sales = st.number_input("Sales (OMR)", min_value=0.0, value=100000.0)
+            st.caption(f"In words: {num_to_words(int(sales))} Omani Rials")
+        else:
+            ltv_pct = st.number_input("LTV (%)", min_value=0.0, max_value=100.0, value=80.0)
+
+        st.header("Borrower Profile")
+        industry = st.selectbox("Industry", ["Oil & Gas", "Construction", "Real Estate", "Manufacturing", 
+                                               "Trading", "Logistics", "Healthcare", "Hospitality", 
+                                               "Retail", "Mining", "Utilities", "Agriculture"])
+        malaa_score = st.selectbox("Mala’a Score", list(range(300, 901, 50)))
+
+        st.header("Market & Bank Parameters")
+        oibor = st.number_input("OIBOR (%)", value=4.1)
+        cost_of_funds = st.number_input("Cost of Funds (%)", value=5.0)
+        target_nim = st.number_input("Target NIM (%)", value=2.5)
+        fee_income = st.number_input("Fee Income (%)", value=0.4)
+        operating_expense = st.number_input("Operating Expense (%)", value=0.4)
+        upfront_cost = st.number_input("Upfront Cost (%)", value=0.5)
+        min_spread_floor = st.number_input("Min Spread Floor (bps)", value=125)
+        interest_rate_clamp_min = 5.0
+        interest_rate_clamp_max = 10.0
+
+        if st.button("Compute Pricing"):
+            # Risk Model Logic
+            product_factor = {
+                "Asset Backed Loan": 1.35, "Term Loan": 1.20, "Export Finance": 1.10,
+                "Vendor Finance": 0.95, "Supply Chain Finance": 0.90, "Trade Finance": 0.85,
+                "Working Capital": 0.95
+            }[loan_type]
+
+            industry_factor = {
+                "Construction": 1.40, "Real Estate": 1.30, "Mining": 1.30,
+                "Hospitality": 1.25, "Retail": 1.15, "Manufacturing": 1.10,
+                "Trading": 1.05, "Logistics": 1.00, "Oil & Gas": 0.95,
+                "Healthcare": 0.90, "Utilities": 0.85, "Agriculture": 1.15
+            }[industry]
+
+            malaa = malaa_factor(malaa_score)
+            ltv = ltv_factor(ltv_pct) if loan_type != "Working Capital" else 1.0
+            wcs = wcs_factor(working_capital, sales) if loan_type in ["Working Capital", "Supply Chain Finance", "Vendor Finance", "Trade Finance"] else 1.0
+
+            risk_score = product_factor * industry_factor * malaa * (ltv if loan_type != "Working Capital" else wcs)
+
+            # Spread Calculation
+            spread_bps = calculate_spread(risk_score, loan_type, industry)
+            rate = oibor + (spread_bps / 100)
+            rate = max(min(rate, interest_rate_clamp_max), interest_rate_clamp_min)
+
+            # NIM Calculation
+            credit_cost = max(min(0.7 * risk_score, 1.8), 0.2)
+            nim = rate + fee_income - (cost_of_funds + credit_cost + operating_expense)
+
+            # Output Table
+            st.subheader("Pricing Results")
+            st.write(f"**Spread (bps):** {spread_bps}")
+            st.write(f"**Rate (%):** {rate:.2f}")
+            st.write(f"**NIM (%):** {nim:.2f}")
+            st.write(f"**Risk Score:** {risk_score:.2f}")
 
 if __name__ == "__main__":
     main()
