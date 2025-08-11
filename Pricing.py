@@ -166,6 +166,12 @@ def safe_float(value: Optional[float]) -> float:
 def calculate_risk_score() -> Tuple[float, Dict[str, float]]:
     """Calculate composite risk score and components."""
     product = st.session_state.product
+    
+    # Check if the product is valid
+    if product not in PRODUCT_RISKS:
+        st.error(f"Invalid product selected: {product}. Please select a valid product.", icon="🚨")
+        return 0.0, {}
+    
     industry = st.session_state.industry
     
     product_factor = PRODUCT_RISKS[product]
@@ -407,51 +413,4 @@ with st.container():
                     'Metric': ['Risk Score', 'Bucket', 'Rate Range', 'Effective Rate', 
                               'Breakeven Rate', 'NIM', 'Tenor Check'],
                     'Value': [pricing['risk_score'], pricing['bucket'], pricing['rate_range'],
-                             pricing['effective_rate'], pricing['breakeven_rate'],
-                             pricing['nim'], pricing['tenor_check']]
-                }).to_csv(index=False),
-                file_name="pricing_results.csv",
-                mime="text/csv"
-            )
-        
-        # [Previous code remains exactly the same until the Test Scenarios section]
-
-        # Test scenarios
-        with st.expander("Test Scenarios"):
-            # Define test scenarios with proper formatting
-            scenarios = {
-                "Low Risk": {
-                    "product": "Trade Finance",
-                    "industry": "Utilities", 
-                    "malaa_score": 850,
-                    "working_capital": 500000.0,
-                    "sales": 2000000.0,
-                    "ltv": None
-                },
-                "Medium Risk": {
-                    "product": "Term Loan",
-                    "industry": "Manufacturing",
-                    "malaa_score": 700,
-                    "ltv": 70.0,
-                    "working_capital": None,
-                    "sales": None
-                },
-                "High Risk": {
-                    "product": "Asset Backed Loan",
-                    "industry": "Construction",
-                    "malaa_score": 400,
-                    "ltv": 85.0,
-                    "working_capital": None,
-                    "sales": None
-                }
-            }
-
-            cols = st.columns(3)
-            for i, (name, params) in enumerate(scenarios.items()):
-                with cols[i]:
-                    if st.button(f"Load {name}"):
-                        # Safely update session state
-                        for key, value in params.items():
-                            if value is not None:  # Only update non-None values
-                                st.session_state[key] = value
-
+                             pricing['effective_rate'], pricing
