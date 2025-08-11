@@ -2,63 +2,33 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-# Custom number to words converter (fallback)
-def amount_to_words(amount: float, currency: str = "OMR") -> str:
-    """Convert numeric amount to words representation without num2words."""
-    if amount == 0:
-        return "Zero " + currency
-    
-    units = ["", "One", "Two", "Three", "Four", "Five",
-             "Six", "Seven", "Eight", "Nine"]
-    teens = ["Ten", "Eleven", "Twelve", "Thirteen", "Fourteen",
-             "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"]
-    tens = ["", "Ten", "Twenty", "Thirty", "Forty", "Fifty",
-            "Sixty", "Seventy", "Eighty", "Ninety"]
-    scales = ["", "Thousand", "Million"]
-    
-    amount_int = int(amount)
-    decimal_part = int(round((amount - amount_int) * 100))
-    
-    chunks = []
-    scale_index = 0
-    
-    while amount_int > 0:
-        chunk = amount_int % 1000
-        if chunk != 0:
-            chunk_text = ""
-            if chunk >= 100:
-                chunk_text += units[chunk // 100] + " Hundred"
-                chunk = chunk % 100
-                if chunk > 0:
-                    chunk_text += " and "
-            if chunk >= 20:
-                chunk_text += tens[chunk // 10]
-                if chunk % 10 > 0:
-                    chunk_text += "-" + units[chunk % 10]
-            elif chunk >= 10:
-                chunk_text += teens[chunk - 10]
-            else:
-                chunk_text += units[chunk]
-                
-            if scale_index > 0:
-                chunk_text += " " + scales[scale_index]
-            chunks.insert(0, chunk_text)
-        amount_int = amount_int // 1000
-        scale_index += 1
-    
-    amount_str = " ".join(chunks) if chunks else "Zero"
-    if decimal_part > 0:
-        amount_str += f" and {decimal_part:02d}/100"
-    
-    return f"{amount_str} {currency}".title()
+# Configure page settings
+st.set_page_config(
+    page_title="RT360 Risk Pricing Model",
+    layout="wide",
+    page_icon="💲"
+)
 
-# Use num2words if available, otherwise fallback to custom converter
-try:
-    from num2words import num2words
-    def format_currency(amount: float) -> str:
-        return num2words(amount, to='currency', currency='OMR').title()
-except ImportError:
-    format_currency = amount_to_words
+# Custom CSS for styling
+st.markdown("""
+<style>
+.main-container {
+    border: 4px solid #1E90FF;
+    padding: 2rem;
+    border-radius: 10px;
+    background-color: white;
+    margin-top: 1rem;
+}
+.result-container {
+    margin-top: 2rem;
+}
+.rt-text { color: #1E90FF; }
+.threesixty-text { color: #43A047; }
+.market-info {
+    margin-bottom: 1rem;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # Constants for risk multipliers
 PRODUCT_RISKS = {
@@ -86,7 +56,6 @@ INDUSTRY_RISKS = {
     "Agriculture": 0.85
 }
 
-# Industry median utilization
 UTILIZATION_FACTORS = {
     "Trading": 0.65,
     "Manufacturing": 0.55,
@@ -102,28 +71,10 @@ UTILIZATION_FACTORS = {
     "Agriculture": 0.40
 }
 
-# Configure page settings
-st.set_page_config(
-    page_title="RT360 Risk Pricing Model",
-    layout="wide",
-    page_icon="💲"
-)
+def format_currency(amount: float) -> str:
+    """Format currency amount with thousands separators"""
+    return f"{amount:,.2f}"
 
-# Custom CSS for styling
-st.markdown("""
-<style>
-.main-container {
-    border: 4px solid #1E90FF;
-    padding: 2rem;
-    border-radius: 10px;
-    background-color: white;
-}
-.rt-text { color: #1E90FF; }
-.threesixty-text { color: #43A047; }
-</style>
-""", unsafe_allow_html=True)
-
-# Risk Calculation
 def calculate_risk_score(params: dict) -> float:
     """Calculate composite risk score with all factors."""
     product_factor = PRODUCT_RISKS[params["product"]]
@@ -144,66 +95,68 @@ def calculate_risk_score(params: dict) -> float:
     
     return max(min(risk_score, 2.0), 0.4)
 
-# Pricing Calculation
-def calculate_pricing(risk_score: float, params: dict) -> dict:
-    """Calculate all pricing metrics."""
-    base_spread_bps = 100 + 250 * (risk_score - 1)
-    base_spread_bps = min(max(base_spread_bps, 50), 500)
+def calculate_pricing(risk_score: float, params: dict) -> list:
+    """Calculate pricing for all buckets (Low/Medium/High)"""
+    buckets = ["Low", "Medium", "High"]
+    multipliers = {"Low": 0.9, "Medium": 1.0, "High": 1.15}
+    bands = {"Low": 50, "Medium": 75, "High": 100}
     
-    effective_rate = params["oibor_pct"] + (base_spread_bps / 100)
-    effective_rate = min(max(effective_rate, 5.0), 10.0)
+    results = []
     
-    # Define buckets
-    risk_multipliers = {"Low": 0.90, "Medium": 1.00, "High": 1.15}
-    pricing_results = []
-    
-    for bucket, multiplier in risk_multipliers.items():
-        risk_b = max(min(risk_score * multiplier, 2.0), 0.4)
-        base_spread_bps_b = min(max(100 + 250 * (risk_b - 1), 50), 500)
+    for bucket in buckets:
+        risk_adjusted = max(min(risk_score * multipliers[bucket], 2.0), 0.4)
         
-        band_bps = {"Low": 50, "Medium": 75, "High": 100}[bucket]
-        spread_min_bps_b = base_spread_bps_b - band_bps
-        spread_max_bps_b = base_spread_bps_b + band_bps
+        base_spread = min(max(100 + 250 * (risk_adjusted - 1), 50), 500)
+        spread_min = base_spread - bands[bucket]
+        spread_max = base_spread + bands[bucket]
         
-        rate_min_pct_b = min(max(params["oibor_pct"] + spread_min_bps_b / 100, 5.0), 10.0)
-        rate_max_pct_b = min(max(params["oibor_pct"] + spread_max_bps_b / 100, 5.0), 10.0)
+        rate_min = min(max(params["oibor_pct"] + spread_min / 100, 5.0), 10.0)
+        rate_max = min(max(params["oibor_pct"] + spread_max / 100, 5.0), 10.0)
         
-        # Calculate NII
-        fee_yield_pct = params["fees_income_pct"]
-        funding_cost_pct = params["cost_of_funds_pct"]
-        credit_cost_pct_b = min(max(0.4 * risk_b / 100, 0.2), 1.0)
-        opex_pct = 0.4
+        # Net Interest Income calculation
+        avg_rate = (rate_min + rate_max) / 2
+        fee_yield = params["fees_income_pct"]
+        funding_cost = params["cost_of_funds_pct"]
+        credit_cost = min(max(0.4 * risk_adjusted, 0.2), 1.0)
+        opex = 0.4
         
-        E_avg = params["exposure"] * 0.55 if params["product"] in ["Asset Backed Loan", "Term Loan", "Export Finance"] else params["exposure"] * (UTILIZATION_FACTORS[params["industry"]] if params["industry"] in UTILIZATION_FACTORS else 0.5)
+        if params["product"] in ["Asset Backed Loan", "Term Loan", "Export Finance"]:
+            E_avg = params["exposure"] * 0.55  # Amortizing approximation
+            optimal_util = "–"
+        else:
+            utilization = UTILIZATION_FACTORS[params["industry"]]
+            E_avg = params["exposure"] * utilization
+            optimal_util = round(utilization * 100)
         
-        nim_net_pct_b = (rate_min_pct_b + rate_max_pct_b) / 2 + fee_yield_pct - funding_cost_pct / 100 - credit_cost_pct_b - opex_pct
+        nim_net_pct = avg_rate + fee_yield - funding_cost - credit_cost - opex
+        nii_omr = (nim_net_pct / 100) * E_avg
         
         # Breakeven calculation
-        if nim_net_pct_b <= 0:
-            breakeven_months_b = "Breakeven not within the tenor"
+        if nim_net_pct <= 0:
+            breakeven_months = "Breakeven not within tenor"
         else:
             C0 = 0.005 * params["exposure"]  # Upfront cost
-            net_margin_monthly = (nim_net_pct_b / 100 / 12) * E_avg
-            breakeven_months_b = np.ceil(C0 / net_margin_monthly)
-            breakeven_months_b = int(breakeven_months_b) if breakeven_months_b <= params["tenor"] else "Breakeven not within the tenor"
+            monthly_margin = (nim_net_pct / 100 / 12) * E_avg
+            breakeven_months = np.ceil(C0 / monthly_margin)
+            breakeven_months = int(breakeven_months) if breakeven_months <= params["tenor"] else "Breakeven not within tenor"
         
-        pricing_results.append({
-            "bucket": bucket,
-            "spread_min_bps": spread_min_bps_b,
-            "spread_max_bps": spread_max_bps_b,
-            "rate_min_pct": rate_min_pct_b,
-            "rate_max_pct": rate_max_pct_b,
-            "nii_omr": (nim_net_pct_b / 100) * E_avg,
-            "breakeven_months": breakeven_months_b,
-            "optimal_utilization": "–" if params["product"] in ["Asset Backed Loan", "Term Loan", "Export Finance"] else "–"
+        results.append({
+            "Bucket": bucket,
+            "Float_Min_over_OIBOR_bps": int(spread_min),
+            "Float_Max_over_OIBOR_bps": int(spread_max),
+            "Rate_Min_%": f"{rate_min:.2f}",
+            "Rate_Max_%": f"{rate_max:.2f}",
+            "Net_Interest_Income_OMR": format_currency(nii_omr),
+            "Breakeven_Months": breakeven_months,
+            "Optimal_Utilization_%": optimal_util
         })
     
-    return pricing_results
+    return results
 
-# Main App
 def main():
     st.title(":blue[rt]:green[360] Risk-Adjusted Pricing Model")
     
+    # Sidebar for inputs
     with st.sidebar:
         st.header("Market & Portfolio")
         oibor_pct = st.number_input("OIBOR (%)", value=4.1, step=0.1)
@@ -217,19 +170,34 @@ def main():
         malaa_score = st.selectbox("Mala'a Score", range(300, 901, 50), index=6)
         
         exposure = st.number_input("Loan Quantum (OMR)", min_value=1000, value=1000000)
-        st.caption(format_currency(exposure))
+        st.caption(f"Amount: {exposure:,.2f} OMR")
         
-        tenor = st.slider("Tenor (months)", min_value=6, max_value=360, value=36)
+        tenor = st.slider("Tenor (months)", 6, 360, 36)
         
         if product in ["Asset Backed Loan", "Term Loan", "Export Finance"]:
-            ltv = st.slider("LTV (%)", min_value=10, max_value=95, value=70)
+            ltv = st.slider("LTV (%)", 10, 95, 70)
         else:
             working_capital = st.number_input("Working Capital (OMR)", min_value=0, value=500000)
-            st.caption(format_currency(working_capital))
+            st.caption(f"Amount: {working_capital:,.2f} OMR")
             sales = st.number_input("Sales (OMR)", min_value=0, value=2000000)
-            st.caption(format_currency(sales))
+            st.caption(f"Amount: {sales:,.2f} OMR")
+
+    # Main content area
+    with st.container():
+        st.markdown('<div class="main-container">', unsafe_allow_html=True)
         
-        if st.button("Fetch Pricing"):
+        # Only calculate when button is clicked
+        if st.sidebar.button("Calculate Pricing"):
+            # Validate inputs
+            if (product in ["Asset Backed Loan", "Term Loan", "Export Finance"] and "ltv" not in locals()):
+                st.error("LTV is required for fund-based products")
+                st.stop()
+                
+            if (product in ["Working Capital", "Trade Finance", "Supply Chain Finance", "Vendor Finance"] 
+                and ("working_capital" not in locals() or working_capital <= 0 or "sales" not in locals() or sales <= 0)):
+                st.error("Working Capital and Sales must be positive for utilization products")
+                st.stop()
+            
             # Prepare parameters
             params = {
                 "product": product,
@@ -239,6 +207,7 @@ def main():
                 "tenor": tenor,
                 "oibor_pct": oibor_pct,
                 "cost_of_funds_pct": cost_of_funds_pct,
+                "target_nim_pct": target_nim_pct,
                 "fees_income_pct": fees_income_pct
             }
             
@@ -248,33 +217,35 @@ def main():
                 params["working_capital"] = working_capital
                 params["sales"] = sales
             
-            # Validate inputs
-            if product in ["Asset Backed Loan", "Term Loan", "Export Finance"] and "ltv" not in params:
-                st.error("LTV is required for fund-based products.")
-                return
-            if product in ["Working Capital", "Trade Finance", "Supply Chain Finance", "Vendor Finance"] and (params["working_capital"] <= 0 or params["sales"] <= 0):
-                st.error("Working Capital and Sales must be greater than zero for utilization-based products.")
-                return
-            
-            # Calculate risk and pricing
+            # Calculate pricing
             risk_score = calculate_risk_score(params)
             pricing_results = calculate_pricing(risk_score, params)
             
-            # Create output table
-            output_data = {
-                "Bucket": [result["bucket"] for result in pricing_results],
-                "Float_Min_over_OIBOR_bps": [result["spread_min_bps"] for result in pricing_results],
-                "Float_Max_over_OIBOR_bps": [result["spread_max_bps"] for result in pricing_results],
-                "Rate_Min_%": [f"{result['rate_min_pct']:.2f}" for result in pricing_results],
-                "Rate_Max_%": [f"{result['rate_max_pct']:.2f}" for result in pricing_results],
-                "Net_Interest_Income_OMR": [f"{result['nii_omr']:,.2f}" for result in pricing_results],
-                "Breakeven_Months": [result["breakeven_months"] for result in pricing_results],
-                "Optimal_Utilization_%": [result["optimal_utilization"] for result in pricing_results]
-            }
+            # Display results in main content area
+            st.markdown('<div class="result-container">', unsafe_allow_html=True)
+            st.subheader("Pricing Results")
             
-            # Display output table
-            st.subheader("Pricing Output")
-            st.table(pd.DataFrame(output_data))
+            # Convert results to DataFrame
+            results_df = pd.DataFrame(pricing_results).set_index("Bucket")
+            
+            # Display table with formatting
+            st.dataframe(
+                results_df,
+                column_config={
+                    "Float_Min_over_OIBOR_bps": st.column_config.NumberColumn("Min Spread (bps)", format="%d"),
+                    "Float_Max_over_OIBOR_bps": st.column_config.NumberColumn("Max Spread (bps)", format="%d"),
+                    "Rate_Min_%": "Min Rate (%)",
+                    "Rate_Max_%": "Max Rate (%)",
+                    "Net_Interest_Income_OMR": st.column_config.NumberColumn("NII (OMR)", format="%.2f"),
+                    "Breakeven_Months": "Breakeven (months)",
+                    "Optimal_Utilization_%": "Optimal Util (%)"
+                },
+                use_container_width=True
+            )
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
