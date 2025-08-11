@@ -406,11 +406,13 @@ with st.container():
             st.write(f"- Fees Income: 0.4% of exposure")
             st.write(f"- Monthly Margin: {pricing['monthly_margin']}")
             
-            # Export results
-            st.download_button(
-                label="Export Pricing Data",
-                data=pd.DataFrame({
+            # Ensure all values are present before creating the DataFrame
+            try:
+                pricing_data = {
                     'Metric': ['Risk Score', 'Bucket', 'Rate Range', 'Effective Rate', 
-                              'Breakeven Rate', 'NIM', 'Tenor Check'],
+                               'Breakeven Rate', 'NIM', 'Tenor Check'],
                     'Value': [pricing['risk_score'], pricing['bucket'], pricing['rate_range'],
-                             pricing['effective_rate'], pricing]}))
+                              pricing['effective_rate'], pricing['breakeven_rate'],
+                              pricing['nim'], pricing['tenor_check']]
+                }
+                # Check
