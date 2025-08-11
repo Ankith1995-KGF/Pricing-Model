@@ -419,29 +419,4 @@ with st.container():
             scenarios = {
                 "Low Risk": {
                     "product": "Trade Finance",
-                    "industry": "Utilities",
-                    "malaa_score": 850,
-                    "working_capital": 500000,
-                    "sales": 2000000
-                },
-                "Medium Risk": {
-                    "product": "Term Loan",
-                    "industry": "Manufacturing",
-                    "malaa_score": 700,
-                    "ltv": 70
-                },
-                "High Risk": {
-                    "product": "Asset Backed Loan",
-                    "industry": "Construction",
-                    "malaa_score": 400,
-                    "ltv": 85
-                }
-            }
-            
-            for name, params in scenarios.items():
-                if st.button(f"Load {name} Scenario"):
-                    for key, value in params.items():
-                        st.session_state[key] = value
-                    st.rerun()
-
-st.markdown('</div>', unsafe_allow_html=True)
+                    "industry":
