@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+from num2words import num2words
 from typing import Dict, List, Union
 
 # Configure page settings
@@ -9,6 +10,26 @@ st.set_page_config(
     layout="wide",
     page_icon="💲"
 )
+
+# Custom CSS for styling
+st.markdown("""
+<style>
+.main-container {
+    border: 4px solid #1E90FF;
+    padding: 2rem;
+    border-radius: 10px;
+    background-color: white;
+    margin-top: 1rem;
+}
+.risk-card {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 15px;
+    background-color: #f8f9fa;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # Constants for risk multipliers
 PRODUCT_RISKS = {
@@ -51,58 +72,27 @@ UTILIZATION_FACTORS = {
     "Agriculture": 0.40
 }
 
-def format_currency(amount: float) -> str:
-    """Format currency amount with proper commas and decimals"""
-    return f"{amount:,.2f}"
-
-def get_borrower_risk_profile(malaa_score: int) -> str:
-    """Categorize borrower risk based on Mala'a score"""
-    if malaa_score < 500:
-        return "High"
-    elif 500 <= malaa_score < 650:
-        return "Medium-High"
-    elif 650 <= malaa_score < 750:
-        return "Medium"
-    else:
-        return "Low"
-
-def get_industry_risk_profile(industry: str) -> str:
-    """Categorize industry risk based on industry factor"""
-    factor = INDUSTRY_RISKS.get(industry, 0.75)
-    if factor >= 0.85:
-        return "High"
-    elif 0.70 <= factor < 0.85:
-        return "Medium"
-    else:
-        return "Low"
-
-def get_product_risk_profile(product: str) -> str:
-    """Categorize product risk based on product factor"""
-    factor = PRODUCT_RISKS.get(product, 0.75)
-    if factor >= 0.90:
-        return "High"
-    elif 0.70 <= factor < 0.90:
-        return "Medium"
-    else:
-        return "Low"
+def clamp(value: float, min_value: float, max_value: float) -> float:
+    """Clamp a value between a minimum and maximum."""
+    return max(min(value, max_value), min_value)
 
 def calculate_risk_score(params: Dict) -> float:
-    """Calculate composite risk score with all factors"""
+    """Calculate composite risk score with all factors."""
     product_factor = PRODUCT_RISKS[params["product"]]
     industry_factor = INDUSTRY_RISKS[params["industry"]]
     malaa_factor = 1.3 - (params["malaa_score"] - 300) * (0.8 / 600)
     
     if params["product"] in ["Asset Backed Loan", "Term Loan", "Export Finance"]:
-        ltv_factor = max(min(0.7 + 0.0035 * params["ltv"], 1.2), 0.8)
+        ltv_factor = clamp(0.7 + 0.0035 * params["ltv"], 0.8, 1.2)
         risk_score = product_factor * industry_factor * malaa_factor * ltv_factor
     else:
         wc_to_sales = params["working_capital"] / max(params["sales"], 1)
-        wcs_factor = min(1.45, max(0.85, 0.85 + 0.6 * min(wc_to_sales, 1.0)))
+        wcs_factor = 0.85 + 0.6 * min(wc_to_sales, 1.0)
         utilization = UTILIZATION_FACTORS[params["industry"]]
-        util_factor = max(min(1 - 0.15 * (0.8 - utilization), 1.15), 0.85)
+        util_factor = clamp(1 - 0.15 * (0.8 - utilization), 0.85, 1.15)
         risk_score = product_factor * industry_factor * malaa_factor * wcs_factor * util_factor
     
-    return max(min(risk_score, 2.0), 0.4)
+    return clamp(risk_score, 0.4, 2.0)
 
 def calculate_pricing(risk_score: float, params: Dict) -> List[Dict]:
     """Calculate pricing for all buckets (Low/Medium/High)"""
@@ -111,63 +101,84 @@ def calculate_pricing(risk_score: float, params: Dict) -> List[Dict]:
     bands = {"Low": 50, "Medium": 75, "High": 100}
     
     results = []
+    
     for bucket in buckets:
-        risk_adjusted = max(min(risk_score * multipliers[bucket], 2.0), 0.4)
+        risk_b = clamp(risk_score * multipliers[bucket], 0.4, 2.0)
         
-        base_spread = min(max(100 + 250 * (risk_adjusted - 1), 75), 500)
-        spread_min = base_spread - bands[bucket]
-        spread_max = base_spread + bands[bucket]
+        base_spread_bps = clamp(100 + 250 * (risk_b - 1), 75, 500)
+        spread_min_bps = base_spread_bps - bands[bucket]
+        spread_max_bps = base_spread_bps + bands[bucket]
         
-        rate_min = min(max(params["oibor_pct"] + spread_min / 100, 5.0), 10.0)
-        rate_max = min(max(params["oibor_pct"] + spread_max / 100, 5.0), 10.0)
+        # Ensure positive spreads
+        spread_min_bps = max(spread_min_bps, 75)
+        spread_max_bps = max(spread_max_bps, spread_min_bps + 1)
+        
+        rate_min_pct = clamp(params["oibor_pct"] + spread_min_bps / 100, 5.0, 10.0)
+        rate_max_pct = clamp(params["oibor_pct"] + spread_max_bps / 100, 5.0, 10.0)
         
         # Calculate financial metrics
-        avg_rate = (rate_min + rate_max) / 2
+        avg_rate = (rate_min_pct + rate_max_pct) / 2
         fee_yield = params["fees_income_pct"]
         funding_cost = params["cost_of_funds_pct"]
-        credit_cost = max(min(0.4 * risk_adjusted, 1.0), 0.2)
+        credit_cost = clamp(0.4 * risk_b, 0.2, 1.0)
         opex = 0.4
         
         if params["product"] in ["Asset Backed Loan", "Term Loan", "Export Finance"]:
             E_avg = params["exposure"] * 0.55  # Amortizing approximation
-            optimal_util = "–"
+            optimal_utilization = "–"
             
             # EMI calculation
             i_m = avg_rate / 100 / 12
             EMI = params["exposure"] * i_m * (1 + i_m) ** params["tenor"] / ((1 + i_m) ** params["tenor"] - 1)
-            EMI_str = format_currency(EMI)
+            EMI_OMR = EMI
         else:
             utilization = UTILIZATION_FACTORS[params["industry"]]
             E_avg = params["exposure"] * utilization
-            optimal_util = round(utilization * 100)
-            EMI_str = "–"
+            optimal_utilization = round(utilization * 100)
+            EMI_OMR = "–"
         
         nim_pct = avg_rate + fee_yield - funding_cost - credit_cost - opex
-        nii = (nim_pct / 100) * E_avg
+        NII_annual = (nim_pct / 100) * E_avg
         
         # Breakeven calculation
-        if nim_pct <= 0:
-            breakeven = "Breakeven not within tenor"
+        if params["product"] in ["Asset Backed Loan", "Term Loan", "Export Finance"]:
+            C0 = 0.005 * params["exposure"]  # Upfront cost
+            balance = params["exposure"]
+            cum_net = -C0
+            breakeven_months = "Breakeven not within the tenor"
+            for m in range(1, params["tenor"] + 1):
+                interest_income = balance * (rate_min_pct / 100) / 12
+                fee_income = params["exposure"] * (fee_yield / 100) / 12
+                funding_cost = balance * (funding_cost / 100) / 12
+                credit_cost = balance * (credit_cost / 100) / 12
+                opex = balance * (opex / 100) / 12
+                net_margin = interest_income + fee_income - funding_cost - credit_cost - opex
+                cum_net += net_margin
+                principal_repaid = EMI - interest_income
+                balance = max(balance - principal_repaid, 0)
+                if cum_net >= 0:
+                    breakeven_months = m
+                    break
         else:
             C0 = 0.005 * params["exposure"]
-            monthly_margin = (nim_pct / 100 / 12) * E_avg
-            breakeven_months = np.ceil(C0 / monthly_margin)
-            breakeven = int(breakeven_months) if breakeven_months <= params["tenor"] else "Breakeven not within tenor"
+            net_margin_monthly = (nim_pct / 100 / 12) * E_avg
+            if net_margin_monthly <= 0:
+                breakeven_months = "Breakeven not within the tenor"
+            else:
+                breakeven_months = np.ceil(C0 / net_margin_monthly)
+                breakeven_months = int(breakeven_months) if breakeven_months <= params["tenor"] else "Breakeven not within the tenor"
         
         results.append({
             "Bucket": bucket,
-            "Min Spread": int(spread_min),
-            "Max Spread": int(spread_max),
-            "Min Rate": f"{rate_min:.2f}%",
-            "Max Rate": f"{rate_max:.2f}%",
-            "EMI": EMI_str,
-            "NII": f"{nii:,.2f}",
-            "NIM": f"{nim_pct:.2f}%",
-            "Breakeven": breakeven,
-            "Optimal Util": f"{optimal_util}%" if isinstance(optimal_util, int) else optimal_util,
-            "Borrower Risk": get_borrower_risk_profile(params["malaa_score"]),
-            "Industry Risk": get_industry_risk_profile(params["industry"]),
-            "Product Risk": get_product_risk_profile(params["product"])
+            "Float_Min_over_OIBOR_bps": int(spread_min_bps),
+            "Float_Max_over_OIBOR_bps": int(spread_max_bps),
+            "Rate_Min_%": f"{rate_min_pct:.2f}",
+            "Rate_Max_%": f"{rate_max_pct:.2f}",
+            "EMI_OMR": format_currency(EMI_OMR) if isinstance(EMI_OMR, float) else EMI_OMR,
+            "Net_Interest_Income_OMR": format_currency(NII_annual),
+            "NIM_%": f"{nim_pct:.2f}",
+            "Breakeven_Months": breakeven_months,
+            "Optimal_Utilization_%": optimal_utilization
         })
     
     return results
@@ -181,7 +192,7 @@ def main():
         oibor_pct = st.number_input("OIBOR (%)", value=4.1, step=0.1)
         cost_of_funds_pct = st.number_input("Cost of Funds (%)", value=5.0, step=0.1)
         target_nim_pct = st.number_input("Target NIM (%)", value=2.5, step=0.1)
-        fees_income_pct = 0.4
+        fees_income_pct = 0.4  # Fixed
         
         st.header("Loan Parameters")
         product = st.selectbox("Product", list(PRODUCT_RISKS.keys()))
@@ -189,7 +200,7 @@ def main():
         malaa_score = st.selectbox("Mala'a Score", range(300, 901, 50), index=6)
         
         exposure = st.number_input("Loan Quantum (OMR)", min_value=1000, value=1000000)
-        st.caption(f"{exposure:,.2f} OMR")
+        st.caption(f"{format_currency(exposure)} OMR")
         
         tenor = st.slider("Tenor (months)", 6, 360, 36)
         
@@ -197,82 +208,62 @@ def main():
             ltv = st.slider("LTV (%)", 10, 95, 70)
         else:
             working_capital = st.number_input("Working Capital (OMR)", min_value=0, value=500000)
-            st.caption(f"{working_capital:,.2f} OMR")
+            st.caption(f"{format_currency(working_capital)} OMR")
             sales = st.number_input("Sales (OMR)", min_value=0, value=2000000)
-            st.caption(f"{sales:,.2f} OMR")
+            st.caption(f"{format_currency(sales)} OMR")
 
     # Main content
     with st.container():
-        col1, col2 = st.columns(2)
+        st.markdown('<div class="main-container">', unsafe_allow_html=True)
         
-        # Risk profile cards
-        with col1:
-            if st.sidebar.button("Fetch Pricing"):
-                params = {
-                    "product": product,
-                    "industry": industry,
-                    "malaa_score": malaa_score,
-                    "exposure": exposure,
-                    "tenor": tenor,
-                    "oibor_pct": oibor_pct,
-                    "cost_of_funds_pct": cost_of_funds_pct,
-                    "target_nim_pct": target_nim_pct,
-                    "fees_income_pct": fees_income_pct
-                }
+        # Only calculate when button is clicked
+        if st.sidebar.button("Fetch Pricing"):
+            # Validate inputs
+            if (product in ["Asset Backed Loan", "Term Loan", "Export Finance"] and "ltv" not in locals()):
+                st.error("LTV is required for fund-based products.")
+                st.stop()
                 
-                if product in ["Asset Backed Loan", "Term Loan", "Export Finance"]:
-                    params["ltv"] = ltv
-                else:
-                    params["working_capital"] = working_capital
-                    params["sales"] = sales
-                
-                # Validate inputs
-                if (product in ["Asset Backed Loan", "Term Loan", "Export Finance"] and "ltv" not in params):
-                    st.error("LTV is required for fund-based products")
-                    st.stop()
-                
-                if (product in ["Working Capital", "Trade Finance", "Supply Chain Finance", "Vendor Finance"] 
-                    and (params["working_capital"] <= 0 or params["sales"] <= 0)):
-                    st.error("Working Capital and Sales must be positive for utilization products")
-                    st.stop()
-                
-                # Calculate pricing
-                risk_score = calculate_risk_score(params)
-                prices = calculate_pricing(risk_score, params)
-                
-                # Display risk profile cards
-                st.subheader("Risk Profile Summary")
-                
-                borrower_risk = get_borrower_risk_profile(params["malaa_score"])
-                industry_risk = get_industry_risk_profile(params["industry"])
-                product_risk = get_product_risk_profile(params["product"])
-                
-                st.metric("Borrower Risk", borrower_risk)
-                st.metric("Industry Risk", industry_risk)
-                st.metric("Product Risk", product_risk)
+            if (product in ["Working Capital", "Trade Finance", "Supply Chain Finance", "Vendor Finance"] 
+                and (working_capital <= 0 or sales <= 0)):
+                st.error("Working Capital and Sales must be positive for utilization products.")
+                st.stop()
+            
+            # Prepare parameters
+            params = {
+                "product": product,
+                "industry": industry,
+                "malaa_score": malaa_score,
+                "exposure": exposure,
+                "tenor": tenor,
+                "oibor_pct": oibor_pct,
+                "cost_of_funds_pct": cost_of_funds_pct,
+                "target_nim_pct": target_nim_pct,
+                "fees_income_pct": fees_income_pct
+            }
+            
+            if product in ["Asset Backed Loan", "Term Loan", "Export Finance"]:
+                params["ltv"] = ltv
+            else:
+                params["working_capital"] = working_capital
+                params["sales"] = sales
+            
+            # Calculate risk and pricing
+            risk_score = calculate_risk_score(params)
+            pricing_results = calculate_pricing(risk_score, params)
+            
+            # Display results in main content area
+            st.subheader("Pricing Results")
+            
+            # Convert results to DataFrame
+            results_df = pd.DataFrame(pricing_results).set_index("Bucket")
+            
+            # Display table with formatting
+            st.dataframe(
+                results_df,
+                use_container_width=True
+            )
         
-        # Pricing results
-        with col2:
-            if st.sidebar.button("Fetch Pricing"):
-                st.subheader("Pricing Results")
-                
-                # Convert to DataFrame
-                df = pd.DataFrame(prices)
-                
-                # Format columns
-                columns = {
-                    "Bucket": "Bucket",
-                    "Min Spread": "Min Spread (bps)",
-                    "Max Spread": "Max Spread (bps)",
-                    "Min Rate": "Min Rate",
-                    "Max Rate": "Max Rate",
-                    "EMI": "EMI (OMR)",
-                    "NII": "NII (OMR)",
-                    "NIM": "NIM",
-                    "Breakeven": "Breakeven (months)",
-                    "Optimal Util": "Optimal Util",
-                }
-                
-                # Display only the desired columns
-                st.dataframe()
-                    df[]
+        st.markdown('</div>', unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    main()
