@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from num2words import num2words
 
 # Configure page settings
 st.set_page_config(
@@ -70,6 +69,56 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Custom fallback for num2words functionality
+def amount_to_words(amount, currency="OMR"):
+    """Fallback function to convert numbers to words"""
+    if amount == 0:
+        return "Zero " + currency
+    
+    units = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"]
+    teens = ["Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", 
+             "Sixteen", "Seventeen", "Eighteen", "Nineteen"]
+    tens = ["", "Ten", "Twenty", "Thirty", "Forty", "Fifty", 
+            "Sixty", "Seventy", "Eighty", "Ninety"]
+    thousands = ["", "Thousand", "Million"]
+    
+    def convert_less_than_thousand(n):
+        if n == 0:
+            return ""
+        if n < 10:
+            return units[int(n)]
+        if n < 20:
+            return teens[int(n) - 10]
+        if n < 100:
+            return tens[int(n) // 10] + (" " + convert_less_than_thousand(n % 10) if n % 10 != 0 else "")
+        return units[int(n) // 100] + " Hundred" + (" " + convert_less_than_thousand(n % 100) if n % 100 != 0 else "")
+    
+    amount = float(amount)
+    if amount < 0:
+        return "Negative " + amount_to_words(abs(amount), currency)
+    
+    parts = []
+    for i in range(len(thousands)):
+        chunk = amount % 1000
+        if chunk != 0:
+            part = convert_less_than_thousand(chunk)
+            if thousands[i]:
+                part += " " + thousands[i]
+            parts.insert(0, part)
+        amount = amount // 1000
+    
+    amount_str = " ".join(parts)
+    return f"{amount_str} {currency}".strip()
+
+try:
+    from num2words import num2words
+    def format_currency(amount):
+        return num2words(amount, to='currency', currency='OMR')
+except ImportError:
+    st.warning("Package 'num2words' not found. Using built-in number conversion.")
+    def format_currency(amount):
+        return amount_to_words(amount)
+
 # --- Constants and Configuration ---
 INDUSTRIES = [
     "Oil & Gas", "Construction", "Trading", "Manufacturing", 
@@ -92,8 +141,7 @@ INDUSTRY_RISK_FACTORS = {
 
 PRODUCT_RISKS = {
     "Asset Backed Loan": 1.00, "Term Loan": 0.90, "Export Finance": 0.80,
-    "Vendor Finance": 0.60, "Supply Chain Finance": 0.55, "Trade Finance": 0.50,
-    "Working Capital": 0.65
+    "Vendor Finance": 0.60, "Supply Chain Finance": 0.55, "Trade Finance": 0.50
 }
 
 UTILIZATION_MEDIANS = {
@@ -116,355 +164,211 @@ st.markdown(
 # --- Sidebar with Inputs ---
 with st.sidebar:
     st.header("Loan Parameters")
+    product = st.selectbox("Product", PRODUCTS, index=0)
+    industry = st.selectbox("Industry", INDUSTRIES, index=0)
+    malaa_score = st.selectbox("Mala'a Score", range(300, 901, 50), index=6)
+    tenor = st.number_input("Tenor (months)", min_value=6, value=24)
     
-    # Product type selection
-    product = st.selectbox(
-        "Loan Product Type",
-        PRODUCTS,
-        help="Select the type of corporate lending product"
-    )
-    
-    # Industry selection
-    industry = st.selectbox(
-        "Borrower Industry",
-        INDUSTRIES,
-        help="Select the industry sector of the borrower"
-    )
-    
-    # Mala'a score selection
-    malaa_score = st.selectbox(
-        "Mala'a Credit Score", 
-        list(range(300, 951, 50)),
-        index=6,  # Default to 600
-        help="Borrower's credit risk score (300-900)"
-    )
-    
-    # Tenor input
-    tenor = st.number_input(
-        "Loan Tenor (months)", 
-        min_value=6,
-        max_value=120,
-        value=24,
-        help="Duration of the loan in months"
-    )
-    
-    # Financial amounts
     st.subheader("Financial Amounts")
-    loan_amount = st.number_input(
-        "Loan Amount (OMR)", 
-        min_value=10000.0,
-        value=1000000.0,
-        step=10000.0
-    )
-    st.markdown(
-        f'<div class="amount-in-words">{num2words(loan_amount, to="currency", currency="OMR")}</div>',
-        unsafe_allow_html=True
-    )
+    loan_amount = st.number_input("Loan Amount (OMR)", min_value=1000.0, value=1000000.0, step=1000.0)
+    st.markdown(f'<div class="amount-in-words">{format_currency(loan_amount)}</div>', unsafe_allow_html=True)
 
     # Product-specific inputs
     if product in ["Asset Backed Loan", "Term Loan", "Export Finance"]:
-        ltv = st.number_input(
-            "Loan-to-Value Ratio (%)",
-            min_value=10.0,
-            max_value=95.0,
-            value=70.0,
-            help="Percentage of collateral value being financed"
-        )
+        ltv = st.number_input("LTV (%)", min_value=10.0, max_value=95.0, value=70.0)
+        working_capital = sales = None
     else:
         ltv = None
-        working_capital = st.number_input(
-            "Working Capital (OMR)",
-            min_value=0.0,
-            value=500000.0
-        )
-        st.markdown(
-            f'<div class="amount-in-words">{num2words(working_capital, to="currency", currency="OMR")}</div>',
-            unsafe_allow_html=True
-        )
-        
-        sales = st.number_input(
-            "Annual Sales (OMR)",
-            min_value=0.0,
-            value=2000000.0
-        )
-        st.markdown(
-            f'<div class="amount-in-words">{num2words(sales, to="currency", currency="OMR")}</div>',
-            unsafe_allow_html=True
-        )
+        working_capital = st.number_input("Working Capital (OMR)", min_value=0.0, value=500000.0, step=1000.0)
+        st.markdown(f'<div class="amount-in-words">{format_currency(working_capital)}</div>', unsafe_allow_html=True)
+        sales = st.number_input("Annual Sales (OMR)", min_value=0.0, value=2000000.0, step=1000.0)
+        st.markdown(f'<div class="amount-in-words">{format_currency(sales)}</div>', unsafe_allow_html=True)
 
-    # Bank parameters
     st.subheader("Bank Parameters")
-    benchmark_rate = st.number_input(
-        "OMIBOR Benchmark Rate (%)",
-        min_value=0.0,
-        value=4.1,
-        step=0.1
-    )
-    cost_of_funds = st.number_input(
-        "Cost of Funds (%)",
-        min_value=0.0,
-        value=5.0,
-        step=0.1
-    )
-    
-    # Advanced controls
-    st.subheader("Advanced Controls")
+    benchmark_rate = st.number_input("OMIBOR Rate (%)", min_value=0.0, value=4.1, step=0.1) / 100
+    cost_of_funds = st.number_input("Cost of Funds (%)", min_value=0.0, value=5.0, step=0.1) / 100
     show_details = st.checkbox("Show Detailed Calculations")
 
 # --- Helper Functions ---
 def calculate_risk_score():
-    """Calculate the composite risk score based on inputs"""
+    """Calculate composite risk score"""
     product_factor = PRODUCT_RISKS[product]
     industry_factor = INDUSTRY_RISK_FACTORS[industry]
     malaa_factor = 1.3 - (malaa_score - 300) * (0.8 / 600)
     
     if product in ["Asset Backed Loan", "Term Loan", "Export Finance"]:
-        ltv_factor = 0.7 + 0.0035 * ltv
-        ltv_factor = max(0.8, min(1.2, ltv_factor))
+        ltv_factor = min(1.2, max(0.8, 0.7 + 0.0035 * ltv))
         risk_score = product_factor * industry_factor * malaa_factor * ltv_factor
     else:
-        wc_pct_sales = working_capital / sales if sales > 0 else 0
-        wcs_factor = 0.85 + 0.6 * min(wc_pct_sales, 1.0)
+        wc_pct = working_capital / sales if sales else 0
+        wcs_factor = min(1.45, max(0.85, 0.85 + 0.6 * min(wc_pct, 1.0)))
         utilization = UTILIZATION_MEDIANS.get(industry, 0.5)
-        util_factor = 1 - 0.15 * (0.8 - utilization)
-        util_factor = max(0.85, min(1.15, util_factor))
+        util_factor = min(1.15, max(0.85, 1 - 0.15 * (0.8 - utilization)))
         risk_score = product_factor * industry_factor * malaa_factor * wcs_factor * util_factor
     
-    return max(0.4, min(2.0, risk_score))
+    return min(2.0, max(0.4, risk_score))
 
 def calculate_pricing(risk_score):
-    """Calculate all pricing metrics based on risk score"""
+    """Calculate all pricing metrics"""
     # Base spread calculation
-    base_spread_bps = 100 + 250 * (risk_score - 1)
-    base_spread_bps = max(50, min(500, base_spread_bps))
+    base_spread_bps = min(500, max(50, 100 + 250 * (risk_score - 1)))
+    base_rate = min(10.0, max(5.0, benchmark_rate + base_spread_bps / 100))
     
-    # Rate calculation
-    base_rate = benchmark_rate + (base_spread_bps / 100)
-    effective_rate = max(5.0, min(10.0, base_rate))
-    fee_yield = 0.004  # 0.4% fees
-    
-    # Bucket assignment with rate ranges
+    # Bucket assignment
     if risk_score < 0.85:
         bucket = "Low Risk"
-        rate_min = max(5.0, effective_rate - 0.5)
-        rate_max = min(10.0, effective_rate + 0.5)
-    elif 0.85 <= risk_score <= 1.15:
+        rate_min = min(10.0, max(5.0, base_rate - 0.5))
+        rate_max = min(10.0, max(5.0, base_rate + 0.5))
+    elif risk_score <= 1.15:
         bucket = "Medium Risk"
-        rate_min = max(5.0, effective_rate - 0.75)
-        rate_max = min(10.0, effective_rate + 0.75)
+        rate_min = min(10.0, max(5.0, base_rate - 0.75))
+        rate_max = min(10.0, max(5.0, base_rate + 0.75))
     else:
         bucket = "High Risk"
-        rate_min = max(5.0, effective_rate - 1.0)
-        rate_max = min(10.0, effective_rate + 1.0)
+        rate_min = min(10.0, max(5.0, base_rate - 1.0))
+        rate_max = min(10.0, max(5.0, base_rate + 1.0))
     
     # Financial metrics
+    fee_yield = 0.004
     credit_cost = min(0.01, max(0.002, 0.004 * risk_score))
-    opex = 0.004  # 0.4%
+    opex = 0.004
     
     # NIM calculation
-    expected_yield = effective_rate/100 + fee_yield  # Convert to decimals
-    funding_cost = cost_of_funds / 100
-    nim = (expected_yield - funding_cost - credit_cost - opex) * 100  # Back to percentage
+    expected_yield = base_rate/100 + fee_yield
+    nim = (expected_yield - cost_of_funds - credit_cost - opex) * 100
     
     # Breakeven calculations
-    breakeven_rate = (funding_cost + credit_cost + opex - fee_yield) * 100
-    breakeven_rate = max(5.0, min(10.0, breakeven_rate))
+    breakeven_rate = (cost_of_funds + credit_cost + opex - fee_yield) * 100
+    breakeven_rate = min(10.0, max(5.0, breakeven_rate))
     
-    if tenor >= 6:
-        monthly_margin = (expected_yield - funding_cost - credit_cost - opex) * loan_amount / 12
-        upfront_cost = 0.005 * loan_amount
-        breakeven_months = np.ceil(upfront_cost / monthly_margin) if monthly_margin > 0 else float('inf')
-        
-        if monthly_margin <= 0:
-            tenor_check = "Not viable at current rates"
-        elif breakeven_months > tenor:
-            tenor_check = f"Extend tenor beyond {tenor} months"
-        else:
-            tenor_check = f"Breakeven in {int(breakeven_months)} months"
+    monthly_margin = (expected_yield - cost_of_funds - credit_cost - opex) * loan_amount / 12
+    upfront_cost = 0.005 * loan_amount
+    
+    if monthly_margin <= 0:
+        tenor_check = "Not viable at current rates"
+    elif tenor < 6:
+        tenor_check = "Minimum tenor not met"
     else:
-        tenor_check = "Minimum 6 months required"
+        breakeven_months = np.ceil(upfront_cost / monthly_margin)
+        tenor_check = f"Breakeven in ~{int(breakeven_months)} months" if breakeven_months <= tenor else "Extend tenor"
     
     return {
         "bucket": bucket,
         "risk_score": risk_score,
-        "rate_range": (rate_min, rate_max),
-        "effective_rate": effective_rate,
-        "nim": nim,
-        "breakeven_rate": breakeven_rate,
+        "rate_range": f"{rate_min:.2f}% - {rate_max:.2f}%",
+        "effective_rate": f"{base_rate:.2f}%",
+        "nim": f"{nim:.2f}%",
+        "breakeven_rate": f"{breakeven_rate:.2f}%",
         "tenor_check": tenor_check
     }
 
-# --- Main Application Logic ---
+# --- Main Content ---
 with st.container():
     st.markdown('<div class="main-container">', unsafe_allow_html=True)
     
     # Input validation
-    validation_errors = []
-    if product in ["Asset Backed Loan", "Term Loan", "Export Finance"] and ltv is None:
-        validation_errors.append("LTV is required for the selected product type")
-    if product in ["Working Capital", "Trade Finance", "Supply Chain Finance", "Vendor Finance"] and sales <= 0:
-        validation_errors.append("Sales must be positive for the selected product type")
+    validation_passed = True
+    if product in ["Asset Backed Loan", "Term Loan", "Export Finance"] and (ltv is None or ltv <= 0):
+        st.error("⚠️ LTV must be provided for selected product type!")
+        validation_passed = False
+    if product not in ["Asset Backed Loan", "Term Loan", "Export Finance"] and (working_capital is None or working_capital <= 0 or sales is None or sales <= 0):
+        st.error("⚠️ Working Capital and Sales must be positive for selected product type!")
+        validation_passed = False
     
-    if validation_errors:
-        for error in validation_errors:
-            st.error(error)
-    else:
-        # Calculate risk and pricing
+    if validation_passed:
         risk_score = calculate_risk_score()
         pricing = calculate_pricing(risk_score)
         
-        # Create tabs for different views
-        overview_tab, pricing_tab = st.tabs(["Overview Dashboard", "Detailed Pricing"])
+        # Create tabs
+        overview_tab, pricing_tab = st.tabs(["Overview Dashboard", "Pricing Table"])
         
         with overview_tab:
             st.subheader("Risk Assessment Summary")
+            cols = st.columns(3)
+            cols[0].metric("Risk Score", f"{risk_score:.2f}")
+            cols[1].metric("Risk Bucket", pricing["bucket"])
+            cols[2].metric("Market Rate Band", "5.0% - 10.0%")
             
-            # KPI cards
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.markdown('<div class="kpi-card"><div class="kpi-title">Risk Category</div><div class="kpi-value">{}</div></div>'.format(pricing["bucket"]), unsafe_allow_html=True)
-            with col2:
-                st.markdown('<div class="kpi-card"><div class="kpi-title">Composite Risk Score</div><div class="kpi-value">{:.2f}</div></div>'.format(risk_score), unsafe_allow_html=True)
-            with col3:
-                st.markdown('<div class="kpi-card"><div class="kpi-title">Market Rate Band</div><div class="kpi-value">5.0% - 10.0%</div></div>', unsafe_allow_html=True)
+            st.subheader("Key Pricing Metrics")
+            cols = st.columns(3)
+            cols[0].metric("Proposed Rate Range", pricing["rate_range"])
+            cols[1].metric("Representative Rate", pricing["effective_rate"])
+            cols[2].metric("Net Interest Margin", pricing["nim"])
             
-            # Key metrics
-            st.subheader("Pricing Summary")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Proposed Rate Range", 
-                        f"{pricing['rate_range'][0]:.2f}% - {pricing['rate_range'][1]:.2f}%")
-            with col2:
-                st.metric("Representative Rate", f"{pricing['effective_rate']:.2f}%")
-            with col3:
-                st.metric("Net Interest Margin", f"{pricing['nim']:.2f}%")
-            
-            # Breakeven analysis
             st.subheader("Breakeven Analysis")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Breakeven Rate", f"{pricing['breakeven_rate']:.2f}%")
-            with col2:
-                st.metric("Tenor Assessment", pricing["tenor_check"])
+            cols = st.columns(2)
+            cols[0].metric("Breakeven Rate", pricing["breakeven_rate"])
+            cols[1].metric("Tenor Assessment", pricing["tenor_check"])
         
         with pricing_tab:
-            st.subheader("Pricing Details")
-            
-            # Create detailed pricing table
-            pricing_table = pd.DataFrame({
-                "Metric": [
-                    "Risk Category",
-                    "Composite Risk Score",
-                    "Rate Range (%)",
-                    "Representative Rate (%)",
-                    "Breakeven Rate (%)",
-                    "Net Interest Margin (%)",
-                    "Tenor Assessment"
-                ],
-                "Value": [
-                    pricing["bucket"],
-                    f"{risk_score:.2f}",
-                    f"{pricing['rate_range'][0]:.2f} - {pricing['rate_range'][1]:.2f}",
-                    f"{pricing['effective_rate']:.2f}",
-                    f"{pricing['breakeven_rate']:.2f}",
-                    f"{pricing['nim']:.2f}",
-                    pricing["tenor_check"]
-                ]
-            })
-            
-            # Display the table
-            st.dataframe(
-                pricing_table,
-                column_config={
-                    "Metric": st.column_config.Column(width="medium"),
-                    "Value": st.column_config.Column(width="medium")
-                },
-                hide_index=True,
-                use_container_width=True
-            )
-            
-            # Add helper text
-            st.caption("""
-            **Notes:**
-            - Rates are clamped to market band of 5.0% to 10.0%
-            - Fees are assumed at 0.4% of exposure annually
-            - NIM calculated net of cost of funds, credit costs, and operational expenses
-            """)
+            st.subheader("Detailed Pricing")
+            pricing_data = {
+                "Metric": ["Risk Bucket", "Risk Score", "Rate Range", 
+                          "Representative Rate", "NIM", "Breakeven Rate", 
+                          "Tenor Check"],
+                "Value": [pricing["bucket"], f"{risk_score:.2f}", pricing["rate_range"],
+                         pricing["effective_rate"], pricing["nim"], 
+                         pricing["breakeven_rate"], pricing["tenor_check"]]
+            }
+            st.dataframe(pd.DataFrame(pricing_data), hide_index=True)
             
             # Download button
-            csv = pricing_table.to_csv(index=False).encode('utf-8')
+            csv = pd.DataFrame(pricing_data).to_csv(index=False).encode('utf-8')
             st.download_button(
-                label="Download Pricing Details",
-                data=csv,
-                file_name="loan_pricing_details.csv",
-                mime="text/csv"
+                "Download Pricing Details",
+                csv,
+                "loan_pricing.csv",
+                "text/csv"
             )
         
-        # Show detailed calculations if requested
         if show_details:
-            st.subheader("Detailed Calculations")
-            
-            with st.expander("Risk Score Components"):
-                st.write(f"**Product Factor ({product}):** {PRODUCT_RISKS[product]:.2f}")
-                st.write(f"**Industry Factor ({industry}):** {INDUSTRY_RISK_FACTORS[industry]:.2f}")
-                st.write(f"**Mala'a Score Factor (Mala'a {malaa_score}):** {1.3 - (malaa_score - 300) * (0.8 / 600):.2f}")
+            with st.expander("Detailed Calculations"):
+                st.write("**Risk Score Components:**")
+                st.write(f"- Product Factor ({product}): {PRODUCT_RISKS[product]:.2f}")
+                st.write(f"- Industry Factor ({industry}): {INDUSTRY_RISK_FACTORS[industry]:.2f}")
                 
                 if product in ["Asset Backed Loan", "Term Loan", "Export Finance"]:
-                    st.write(f"**LTV Factor (LTV {ltv}%):** {0.7 + 0.0035 * ltv:.2f}")
+                    st.write(f"- LTV Factor ({ltv}%): {min(1.2, max(0.8, 0.7 + 0.0035 * ltv)):.2f}")
                 else:
-                    wc_pct_sales = working_capital / sales if sales > 0 else 0
-                    st.write(f"**WC/Sales Factor (WC/Sales {wc_pct_sales:.2f}):** {0.85 + 0.6 * min(wc_pct_sales, 1.0):.2f}")
-                    utilization = UTILIZATION_MEDIANS.get(industry, 0.5)
-                    st.write(f"**Utilization Factor ({industry} utilization {utilization*100:.0f}%):** {1 - 0.15 * (0.8 - utilization):.2f}")
+                    st.write(f"- WC/Sales Factor: {0.85 + 0.6 * min(working_capital/sales, 1.0):.2f}")
+                    st.write(f"- Utilization Factor: {1 - 0.15 * (0.8 - UTILIZATION_MEDIANS.get(industry, 0.5)):.2f}")
                 
-                st.write(f"**Composite Risk Score:** {risk_score:.2f}")
-            
-            with st.expander("Pricing Components"):
-                base_spread_bps = 100 + 250 * (risk_score - 1)
-                st.write(f"**Base Spread Calculation:** 100 + 250 * ({risk_score:.2f} - 1) = {base_spread_bps:.0f} bps")
-                st.write(f"**Effective Rate:** OMIBOR {benchmark_rate}% + {base_spread_bps/100:.2f}% = {(benchmark_rate + base_spread_bps/100):.2f}%")
-                st.write(f"**After Clamping to Market Band:** {pricing['effective_rate']:.2f}%")
-                
-                st.write("\n**NIM Calculation:**")
-                st.write(f"- Expected Yield: {pricing['effective_rate']:.2f}% (interest) + 0.4% (fees) = {pricing['effective_rate'] + 0.4:.2f}%")
-                st.write(f"- Cost of Funds: {cost_of_funds:.1f}%")
-                st.write(f"- Credit Cost: {0.004 * risk_score:.3f}% (proportional to risk)")
-                st.write(f"- Operational Expenses: 0.4%")
-                st.write(f"**Net NIM:** {pricing['nim']:.2f}%")
-
+                st.write("\n**Pricing Components:**")
+                base_spread = 100 + 250 * (risk_score - 1)
+                st.write(f"- Base Spread Calculation: 100 + 250 × ({risk_score:.2f} - 1) = {base_spread:.0f} bps")
+                st.write(f"- Effective Rate: {benchmark_rate*100:.1f}% + {base_spread/100:.2f}% = {min(10.0, max(5.0, benchmark_rate + base_spread/100)):.2f}%")
+    
     st.markdown('</div>', unsafe_allow_html=True)
 
-# --- Test Scenarios ---
-with st.expander("Test Scenarios", expanded=False):
+# Test scenarios
+with st.expander("Test Scenarios"):
     st.write("""
-    **Pre-configured test scenarios:**
-    - Low-risk: Utilities, Trade Finance, Mala'a=850, WC/Sales=0.2 → bucket=Low, rate ~5-6%
-    - Mid-risk: Manufacturing, Term Loan, Mala'a=700, LTV=70% → bucket=Medium, ~6.5-8%
-    - High-risk: Construction, Asset Backed Loan, Mala'a=400, LTV=85% → bucket=High, ~8.5-10%
+    **Pre-configured test cases:**
+    - Low Risk: Utilities, Trade Finance, Mala'a 850, WC/Sales=0.2 → Rate ~5-6%
+    - Medium Risk: Manufacturing, Term Loan, Mala'a 700, LTV 70% → Rate ~6.5-8%
+    - High Risk: Construction, ABL, Mala'a 400, LTV 85% → Rate ~8.5-10%
     """)
-
-    if st.button("Load Low-Risk Scenario"):
+    
+    if st.button("Load Low Risk Scenario"):
         st.session_state.product = "Trade Finance"
         st.session_state.industry = "Utilities"
         st.session_state.malaa_score = 850
-        st.session_state.loan_amount = 500000
         st.experimental_rerun()
-
-    if st.button("Load Mid-Risk Scenario"):
+    
+    if st.button("Load Medium Risk Scenario"):
         st.session_state.product = "Term Loan"
         st.session_state.industry = "Manufacturing"
         st.session_state.malaa_score = 700
         st.session_state.ltv = 70
-        st.session_state.loan_amount = 1000000
         st.experimental_rerun()
-
-    if st.button("Load High-Risk Scenario"):
+    
+    if st.button("Load High Risk Scenario"):
         st.session_state.product = "Asset Backed Loan"
         st.session_state.industry = "Construction"
         st.session_state.malaa_score = 400
         st.session_state.ltv = 85
-        st.session_state.loan_amount = 2000000
         st.experimental_rerun()
+
 
 
 
