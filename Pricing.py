@@ -413,4 +413,4 @@ with st.container():
                     'Metric': ['Risk Score', 'Bucket', 'Rate Range', 'Effective Rate', 
                               'Breakeven Rate', 'NIM', 'Tenor Check'],
                     'Value': [pricing['risk_score'], pricing['bucket'], pricing['rate_range'],
-                             pricing['effective_rate'], pricing
+                             pricing['effective_rate'], pricing]
