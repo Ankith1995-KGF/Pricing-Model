@@ -170,7 +170,7 @@ def calculate_risk_score() -> Tuple[float, Dict[str, float]]:
     # Check if the product is valid
     if product not in PRODUCT_RISKS:
         st.error(f"Invalid product selected: {product}. Please select a valid product.", icon="🚨")
-        return 0.0, {}
+        return 1.0, {}  # Return neutral risk score if invalid product
     
     industry = st.session_state.industry
     
@@ -312,8 +312,6 @@ with st.sidebar:
             max_value=95.0,
             key='ltv'
         )
-        st.session_state.working_capital = None
-        st.session_state.sales = None
     else:
         st.number_input(
             "Working Capital (OMR)",
@@ -330,89 +328,4 @@ with st.sidebar:
             step=1000.0,
             key='sales'
         )
-        st.markdown(f'<div class="amount-in-words">{amount_to_words(safe_float(st.session_state.sales))}</div>',
-                   unsafe_allow_html=True)
-
-    st.subheader("Bank Parameters")
-    st.number_input(
-        "OMIBOR Rate (%)",
-        min_value=0.0,
-        step=0.1,
-        key='benchmark_rate'
-    )
-    st.number_input(
-        "Cost of Funds (%)",
-        min_value=0.0,
-        step=0.1,
-        key='cost_of_funds'
-    )
-    
-    st.checkbox(
-        "Show Detailed Calculations",
-        key='show_details'
-    )
-
-# Main Content
-with st.container():
-    st.markdown('<div class="main-container">', unsafe_allow_html=True)
-    
-    # Input validation
-    if (st.session_state.product in ["Asset Backed Loan", "Term Loan", "Export Finance"] and 
-        st.session_state.ltv is None):
-        st.error('Please provide LTV for the selected product type', icon="🚨")
-    elif (st.session_state.product in ["Working Capital", "Trade Finance", "Supply Chain Finance", "Vendor Finance"] and 
-          (st.session_state.working_capital is None or st.session_state.sales is None)):
-        st.error('Please provide Working Capital and Sales for the selected product type', icon="🚨")
-    else:
-        # Perform calculations
-        risk_score, risk_components = calculate_risk_score()
-        pricing = calculate_pricing(risk_score)
-        
-        # Create tabs
-        overview_tab, details_tab = st.tabs(["Overview", "Detailed Analysis"])
-        
-        with overview_tab:
-            st.subheader("Risk Assessment")
-            cols = st.columns(3)
-            cols[0].metric("Risk Score", pricing['risk_score'])
-            cols[1].metric("Risk Bucket", pricing['bucket'])
-            cols[2].metric("Market Rate Band", "5.0% - 10.0%")
-            
-            st.subheader("Pricing Summary")
-            cols = st.columns(3)
-            cols[0].metric("Rate Range", pricing['rate_range'])
-            cols[1].metric("Effective Rate", pricing['effective_rate'])
-            cols[2].metric("Net Interest Margin", pricing['nim'])
-            
-            st.subheader("Breakeven Analysis")
-            cols = st.columns(2)
-            cols[0].metric("Breakeven Rate", pricing['breakeven_rate'])
-            cols[1].metric("Tenor Assessment", pricing['tenor_check'])
-        
-        with details_tab:
-            st.subheader("Risk Components")
-            st.write(f"- Product Factor: {risk_components['product']:.2f} ({st.session_state.product})")
-            st.write(f"- Industry Factor: {risk_components['industry']:.2f} ({st.session_state.industry})")
-            st.write(f"- Mala'a Factor: {risk_components['malaa']:.2f}")
-            
-            if st.session_state.product in ["Asset Backed Loan", "Term Loan", "Export Finance"]:
-                st.write(f"- LTV Factor: {risk_components.get('ltv', 0):.2f}")
-            else:
-                st.write(f"- Working Capital/Sales Factor: {risk_components.get('wc_sales', 0):.2f}")
-                st.write(f"- Utilization Factor: {risk_components.get('utilization', 0):.2f}")
-            
-            st.subheader("Pricing Details")
-            st.write(f"- Base Spread Calculation: 100 + 250 × ({risk_score:.2f} - 1) = {100 + 250 * (risk_score - 1):.0f} bps")
-            st.write(f"- Fees Income: 0.4% of exposure")
-            st.write(f"- Monthly Margin: {pricing['monthly_margin']}")
-            
-            # Ensure all values are present before creating the DataFrame
-            try:
-                pricing_data = {
-                    'Metric': ['Risk Score', 'Bucket', 'Rate Range', 'Effective Rate', 
-                               'Breakeven Rate', 'NIM', 'Tenor Check'],
-                    'Value': [pricing['risk_score'], pricing['bucket'], pricing['rate_range'],
-                              pricing['effective_rate'], pricing['breakeven_rate'],
-                              pricing['nim'], pricing['tenor_check']]
-                }
-                # Check
+        st.markdown(f'<div class
