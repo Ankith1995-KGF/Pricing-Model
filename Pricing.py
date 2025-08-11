@@ -135,6 +135,7 @@ def calculate_pricing(
     cost_of_funds_pct: float,
     target_nim_pct: float,
     product: str,
+    industry: str,  # Added industry parameter
     working_capital: Optional[float] = None,
     sales: Optional[float] = None
 ) -> List[Dict[str, Union[str, int, float]]]:
@@ -273,6 +274,7 @@ def main():
                 cost_of_funds_pct=funding_cost,
                 target_nim_pct=target_nim,
                 product=product,
+                industry=industry,  # Pass industry to the pricing function
                 working_capital=working_capital,
                 sales=sales
             )
