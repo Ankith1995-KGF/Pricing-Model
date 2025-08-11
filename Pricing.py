@@ -274,5 +274,5 @@ def main():
                 }
                 
                 # Display only the desired columns
-                st.dataframe(
-                    df[])
+                st.dataframe()
+                    df[]
