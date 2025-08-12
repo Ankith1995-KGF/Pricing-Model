@@ -783,10 +783,8 @@ def render_assumptions_tab():
            - Base: ABL=32%, Term=38%, Export=35%, Others=30%
            - LTV adjustment: +0.25% per LTV% >50%
         """)
-
-   with st.expander("NIM Calculation"):
-    st.markdown("""
-        - **NIM** = Representative Rate + Fees - (Cost of Funds + Provision + Opex)
+       with st.expander("NIM Calculation"):
+        st.markdown("""
+        - **NIM** = Representative Rate + Fees − (Cost of Funds + Provision + Opex)
         - Target NIM is compared against calculated NIM to flag performance
-    """)
-
+        """)
