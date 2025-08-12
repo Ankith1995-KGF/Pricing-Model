@@ -412,3 +412,43 @@ if run:
                 "Product Risk Factor (×)": f2(product_factor[product]),
                 "Composite Risk Score (×)": f2(risk_base),
                 "Provision % (PD × LGD, annual)": f2(provision)})
+            rows.append({
+                "Pricing Bucket": bucket,
+                "Float (Min) over OIBOR (bps)": float_min_bps,
+                "Float (Rep) over OIBOR (bps)": float_rep_bps,
+                "Float (Max) over OIBOR (bps)": float_max_bps,
+                "Interest Rate — Min (%)": f2(rate_min),
+                "Interest Rate — Representative (%)": f2(rep_rate),
+                "Interest Rate — Max (%)": f2(rate_max),
+                "Equivalent Monthly Installment (OMR)": f2(EMI),
+                "Annual Interest Income (OMR)": annual_interest,
+                "Annual Fee Income (OMR)": annual_fee,
+                "Annual Funding Cost (OMR)": annual_funding,
+                "Annual Provision (OMR)": annual_prov,
+                "Annual Operating Expense (OMR)": annual_opex,
+                "Net Interest Income (OMR)": nii,
+                "Net Interest Margin (%)": f2(NIM_pct),
+                "Breakeven — Min Rate (months)": be_min,
+                "Breakeven — Rep Rate (months)": be_rep,
+                "Breakeven — Max Rate (months)": be_max,
+                "Borrower Risk (by Mala’a)": malaa_label(malaa_score),
+                "Industry Risk Factor (×)": f2(industry_factor[industry]),
+                "Product Risk Factor (×)": f2(product_factor[product]),
+                "Composite Risk Score (×)": f2(risk_base),
+                "Provision % (PD × LGD, annual)": prov_pct
+            })
+
+    # ---- Display results table in Streamlit ----
+    df_out = pd.DataFrame(rows)
+
+    st.markdown("### 📊 Pricing Results")
+    st.dataframe(df_out, use_container_width=True)
+
+    # Optional: download as CSV
+    csv_data = df_out.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="📥 Download results as CSV",
+        data=csv_data,
+        file_name="pricing_results.csv",
+        mime="text/csv",
+    )
