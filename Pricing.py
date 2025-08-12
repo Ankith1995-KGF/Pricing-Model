@@ -534,9 +534,56 @@ def main():
             # You can add batch processing and results display here
 
     with tab3:
-        render_assumptions_tab()
+        def render_assumptions_tab():
+    st.header("Model Assumptions")
 
+    with st.expander("Risk Factors"):
+        col1, col2 = st.columns(2)
 
-# Standard Python entry point
-if __name__ == "__main__":
-    main()
+        with col1:
+            st.subheader("Product Risk Factors")
+            st.table(pd.DataFrame.from_dict({
+                "Asset Backed Loan": 1.35, "Term Loan": 1.20, "Export Finance": 1.10,
+                "Working Capital": 0.95, "Trade Finance": 0.85,
+                "Supply Chain Finance": 0.90, "Vendor Finance": 0.95
+            }, orient="index", columns=["Factor"]))
+
+        with col2:
+            st.subheader("Industry Risk Factors")
+            st.table(pd.DataFrame.from_dict({
+                "Construction": 1.40, "Real Estate": 1.30, "Mining": 1.30,
+                "Hospitality": 1.25, "Retail": 1.15, "Manufacturing": 1.10,
+                "Trading": 1.05, "Logistics": 1.00, "Oil & Gas": 0.95,
+                "Healthcare": 0.90, "Utilities": 0.85, "Agriculture": 1.15
+            }, orient="index", columns=["Factor"]))
+
+    with st.expander("Pricing Parameters"):
+        st.markdown("""
+        - **Base Spread Curve:** 75 bps + 350 × (Risk - 1)
+        - **Bucket Multipliers:** Low (0.9x), Medium (1.0x), High (1.25x)
+        - **Spread Floors:** Low (150 bps), Medium (225 bps), High (325 bps)
+        - **Adders:**
+          - Product: ABL (+125 bps), Term/Export (+75 bps)
+          - Mala'a Score: High (+175), Med-High (+125), Medium (+75)
+        """)
+
+    with st.expander("Methodology"):
+        st.markdown("""
+        1. **Composite Risk Score:**
+           - Product × Industry × Mala'a × (LTV or WC/Sales factor)
+           - Clipped to 0.4–3.5 range
+
+        2. **PD Calculation:** Piecewise interpolation
+           - 0.4 → 0.3%, 1.0 → 1.0%, 2.0 → 3.0%, 3.5 → 6.0%
+           - Stage multiplier: Stage 2 (×2.5), Stage 3 (×6.0)
+
+        3. **LGD Calculation:**
+           - Base: ABL=32%, Term=38%, Export=35%, Others=30%
+           - LTV adjustment: +0.25% per LTV% >50%
+        """)
+
+    with st.expander("NIM Calculation"):
+        st.markdown("""
+        - **NIM** = Representative Rate + Fees − (Cost of Funds + Provision + Opex)
+        - Target NIM compared to calculated NIM to flag performance
+        """)
