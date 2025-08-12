@@ -724,7 +724,7 @@ def calculate_and_display_single_loan(loan_params: Dict, market_params: Dict):
                 height=400
             )
 def render_assumptions_tab():
-    """Render the model assumptions tab"""
+    """Render the model assumptions tab with proper string termination"""
     st.header("Model Assumptions")
     
     with st.expander("Risk Factors"):
@@ -732,28 +732,32 @@ def render_assumptions_tab():
         
         with col1:
             st.subheader("Product Risk Factors")
-            product_factors = {
+            st.table(pd.DataFrame.from_dict({
                 "Asset Backed Loan": 1.35,
-                "Term Loan": 1.20,
+                "Term Loan": 1.20, 
                 "Export Finance": 1.10,
                 "Working Capital": 0.95,
                 "Trade Finance": 0.85,
                 "Supply Chain Finance": 0.90,
                 "Vendor Finance": 0.95
-            }
-            st.table(pd.DataFrame.from_dict(product_factors, orient='index', columns=['Factor']))
+            }, orient='index', columns=['Factor']))
         
         with col2:
             st.subheader("Industry Risk Factors")
-            industry_factors = {
-                "Construction": 1.40, "Real Estate": 1.30,
-                "Mining": 1.30, "Hospitality": 1.25,
-                "Retail": 1.15, "Manufacturing": 1.10,
-                "Trading": 1.05, "Logistics": 1.00,
-                "Oil & Gas": 0.95, "Healthcare": 0.90,
-                "Utilities": 0.85, "Agriculture": 1.15
-            }
-            st.table(pd.DataFrame.from_dict(industry_factors, orient='index', columns=['Factor']))
+            st.table(pd.DataFrame.from_dict({
+                "Construction": 1.40, 
+                "Real Estate": 1.30,
+                "Mining": 1.30, 
+                "Hospitality": 1.25,
+                "Retail": 1.15, 
+                "Manufacturing": 1.10,
+                "Trading": 1.05,
+                "Logistics": 1.00,
+                "Oil & Gas": 0.95,
+                "Healthcare": 0.90,
+                "Utilities": 0.85, 
+                "Agriculture": 1.15
+            }, orient='index', columns=['Factor']))
     
     with st.expander("Pricing Parameters"):
         st.markdown("""
@@ -764,7 +768,7 @@ def render_assumptions_tab():
           - Product: ABL (+125 bps), Term/Export (+75 bps)
           - Mala'a Score: High (+175), Med-High (+125), Medium (+75)
         """)
-    
+
     with st.expander("Methodology"):
         st.markdown("""
         1. **Composite Risk Score:**
@@ -773,13 +777,13 @@ def render_assumptions_tab():
         
         2. **PD Calculation:** Piecewise interpolation
            - 0.4 → 0.3%, 1.0 → 1.0%, 2.0 → 3.0%, 3.5 → 6.0%
-           - Stage 2 (×2.5), Stage 3 (×6.0)
+           - Stage multiplier: Stage 2 (×2.5), Stage 3 (×6.0)
         
         3. **LGD Calculation:**
-           - Product base (ABL=32, Term=38, Export=35, Others=30)
+           - Base: ABL=32%, Term=38%, Export=35%, Others=30%
            - LTV adjustment: +0.25% per LTV% >50%
         """)
 
     with st.expander("NIM Calculation"):
-        st.markdown(""")
+        st.markdown("""
         
