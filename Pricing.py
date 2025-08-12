@@ -411,4 +411,4 @@ if run:
                 "Industry Risk Factor (×)": f2(industry_factor[industry]),
                 "Product Risk Factor (×)": f2(product_factor[product]),
                 "Composite Risk Score (×)": f2(risk_base),
-                "Provision % (PD × LGD, annual)": f2(provision)
+                "Provision % (PD × LGD, annual)": f2(provision)}
