@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Tuple
+from io import StringIO
 
 # --- APP CONFIGURATION ---
 st.set_page_config(
@@ -10,7 +11,20 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom styling for the application
+# --- GLOBAL CONSTANTS ---
+PRODUCT_TYPES = [
+    "Asset Backed Loan", "Term Loan", "Export Finance",
+    "Working Capital", "Trade Finance", "Supply Chain Finance",
+    "Vendor Finance"
+]
+
+INDUSTRIES = [
+    "Oil & Gas", "Construction", "Real Estate", "Manufacturing",
+    "Trading", "Logistics", "Healthcare", "Hospitality", "Retail",
+    "Mining", "Utilities", "Agriculture"
+]
+
+# --- STYLING ---
 st.markdown("""
 <style>
     .header {
@@ -38,11 +52,16 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         border: 2px solid #1e88e5;
     }
+    .kpi-container {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
     .kpi {
         background-color: #f8f9fa;
         border-left: 4px solid #1e88e5;
         padding: 1rem;
-        margin-bottom: 1rem;
         border-radius: 4px;
     }
     .warning {
@@ -56,12 +75,15 @@ st.markdown("""
     .stNumberInput, .stSelectbox, .stSlider {
         margin-bottom: 1rem;
     }
+    .tab-container {
+        padding-top: 1rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # --- UTILITY FUNCTIONS ---
 def num_to_words(n: int) -> str:
-    """Convert integer to words representation for OMR amounts"""
+    """Convert integer to Omani Rials in words"""
     if not isinstance(n, (int, float)) or n < 0:
         return ""
     
@@ -80,16 +102,18 @@ def num_to_words(n: int) -> str:
         if x < 20:
             return teens[x - 10]
         if x < 100:
-            return tens[x // 10] + (" " + units[x % 10] if x % 10 != 0 else "")
+            return tens[x // 10] + ("-" + units[x % 10] if x % 10 != 0 else "")
         if x < 1000:
-            return units[x // 100] + " hundred" + (" " + convert_chunk(x % 100) if x % 100 != 0 else "")
+            return units[x // 100] + " hundred" + (" and " + convert_chunk(x % 100) if x % 100 != 0 else "")
         return ""
     
     magnitude_words = []
-    for magnitude, word in [(10**9, "billion"), (10**6, "million"), (10**3, "thousand")]:
-        if n >= magnitude:
-            magnitude_words.append(f"{convert_chunk(n // magnitude)} {word}")
-            n %= magnitude
+    scales = [(10**9, "billion"), (10**6, "million"), (10**3, "thousand")]
+    
+    for scale, name in scales:
+        if n >= scale:
+            magnitude_words.append(f"{convert_chunk(n // scale)} {name}")
+            n %= scale
     
     if n > 0:
         magnitude_words.append(convert_chunk(n))
@@ -116,16 +140,28 @@ def calculate_risk_factors(
 ) -> Tuple[float, float, float]:
     """Calculate composite risk score and components"""
     product_factors = {
-        "Asset Backed Loan": 1.35, "Term Loan": 1.20, "Export Finance": 1.10,
-        "Working Capital": 0.95, "Trade Finance": 0.85, "Supply Chain Finance": 0.90,
+        "Asset Backed Loan": 1.35,
+        "Term Loan": 1.20,
+        "Export Finance": 1.10,
+        "Working Capital": 0.95,
+        "Trade Finance": 0.85,
+        "Supply Chain Finance": 0.90,
         "Vendor Finance": 0.95
     }
     
     industry_factors = {
-        "Construction": 1.40, "Real Estate": 1.30, "Mining": 1.30,
-        "Hospitality": 1.25, "Retail": 1.15, "Manufacturing": 1.10,
-        "Trading": 1.05, "Logistics": 1.00, "Oil & Gas": 0.95,
-        "Healthcare": 0.90, "Utilities": 0.85, "Agriculture": 1.15
+        "Construction": 1.40,
+        "Real Estate": 1.30,
+        "Mining": 1.30,
+        "Hospitality": 1.25,
+        "Retail": 1.15,
+        "Manufacturing": 1.10,
+        "Trading": 1.05,
+        "Logistics": 1.00,
+        "Oil & Gas": 0.95,
+        "Healthcare": 0.90,
+        "Utilities": 0.85,
+        "Agriculture": 1.15
     }
     
     # Get base factors
@@ -134,7 +170,7 @@ def calculate_risk_factors(
     malaa_factor = np.clip(1.45 - (malaa_score - 300) * (0.90 / 600), 0.55, 1.45)
     
     # Calculate risk modifier
-    if ltv is not None and ltv > 0:
+    if ltv is not None and product in ["Asset Backed Loan", "Term Loan", "Export Finance"]:
         ltv_factor = np.clip(0.55 + 0.0075 * ltv, 0.80, 1.50)
         risk_base = np.clip(product_factor * industry_factor * malaa_factor * ltv_factor, 0.4, 3.5)
     else:
@@ -144,17 +180,20 @@ def calculate_risk_factors(
     
     return risk_base, product_factor, industry_factor
 
-def calculate_pd_lgd(risk_score: float, product: str, ltv: Optional[float], stage: int) -> Tuple[float, float]:
+def calculate_pd_lgd(
+    risk_score: float,
+    product: str,
+    ltv: Optional[float],
+    stage: int
+) -> Tuple[float, float]:
     """Calculate PD and LGD based on risk score, product type, and stage"""
     xs = np.array([0.4, 1.0, 2.0, 3.5])
     ys = np.array([0.3, 1.0, 3.0, 6.0])
     pd = float(np.interp(risk_score, xs, ys))
     
     # Stage multiplier
-    if stage == 2:
-        pd *= 2.5
-    elif stage == 3:
-        pd *= 6.0
+    stage_multipliers = {1: 1.0, 2: 2.5, 3: 6.0}
+    pd *= stage_multipliers.get(stage, 1.0)
     pd = np.clip(pd, 0.1, 60.0)
     
     # LGD calculation
@@ -176,25 +215,27 @@ def calculate_loan_pricing(
     cof_pct: float,
     opex_pct: float,
     fees_pct: float,
-    bucket: str
+    bucket: str,
+    product: str
 ) -> Dict[str, float]:
     """Calculate pricing metrics for a single loan bucket"""
     bucket_multipliers = {"Low": 0.90, "Medium": 1.00, "High": 1.25}
     bucket_bands = {"Low": 60, "Medium": 90, "High": 140}
     bucket_floors = {"Low": 150, "Medium": 225, "High": 325}
     
+    # Calculate adjusted risk for bucket
     risk_b = np.clip(risk_score * bucket_multipliers[bucket], 0.4, 3.5)
     
     # Calculate base spread
     raw_spread_bps = 75 + 350 * (risk_b - 1)
     
-    # Apply adders from borrower, product, and industry factors
+    # Apply adders
     malaa_adders = {"High": 175, "Med-High": 125, "Medium": 75, "Low": 0}
     malaa_adder = malaa_adders[malaa_label]
     
     product_adder = 125 if "Asset Backed" in product else 75 if product in ["Term Loan", "Export Finance"] else 0
     
-    # Calculate center spread with all floors
+    # Calculate final spread with all floors
     center_spread = max(
         bucket_floors[bucket],
         raw_spread_bps,
@@ -216,10 +257,75 @@ def calculate_loan_pricing(
         "spread_max": spread_max,
         "rate_min": rate_min,
         "rate_max": rate_max,
-        "rep_rate": rep_rate
+        "rep_rate": rep_rate,
+        "oibor_pct": oibor_pct
     }
 
-# --- STREAMLIT UI COMPONENTS ---
+def calculate_repayment_schedule(
+    principal: float,
+    rate: float,
+    tenor: int,
+    cof_pct: float,
+    prov_pct: float,
+    opex_pct: float,
+    upfront_cost_pct: float
+) -> Tuple[float, float, float, List[Dict]]:
+    """Calculate repayment schedule and breakeven"""
+    monthly_rate = rate / 100 / 12
+    emi = calculate_emi(principal, rate, tenor)
+    
+    balance = principal
+    schedule = []
+    cumulative_net = 0
+    be_periods = None
+    
+    for month in range(1, tenor + 1):
+        interest_payment = balance * monthly_rate
+        principal_payment = emi - interest_payment
+        provision_payment = balance * prov_pct / 100 / 12
+        funding_cost = balance * cof_pct / 100 / 12
+        operating_cost = balance * opex_pct / 100 / 12
+        
+        net_income = interest_payment - (funding_cost + provision_payment + operating_cost)
+        cumulative_net += net_income
+        
+        # Track when we breakeven on upfront costs
+        if be_periods is None and cumulative_net >= (principal * upfront_cost_pct / 100):
+            be_periods = month
+        
+        schedule.append({
+            "Month": month,
+            "Beginning_Balance": balance,
+            "Principal": principal_payment,
+            "Interest": interest_payment,
+            "Provision": provision_payment,
+            "Funding_Cost": funding_cost,
+            "Opex": operating_cost,
+            "Net_Income": net_income,
+            "Cumulative_Net": cumulative_net
+        })
+        
+        balance -= principal_payment
+        if balance <= 0:
+            break
+    
+    # Calculate first year metrics
+    first_year = schedule[:12]
+    avg_balance = sum([p["Beginning_Balance"] for p in first_year]) / len(first_year)
+    total_interest = sum([p["Interest"] for p in first_year])
+    total_net = sum([p["Net_Income"] for p in first_year])
+    
+    nim = (total_net / avg_balance) * 100 if avg_balance > 0 else 0
+    
+    return emi, total_net, nim, schedule, be_periods or tenor
+
+def calculate_emi(principal: float, rate: float, tenor: int) -> float:
+    """Calculate equated monthly installment"""
+    monthly_rate = rate / 100 / 12
+    if monthly_rate == 0:
+        return principal / tenor
+    return principal * monthly_rate * (1 + monthly_rate)**tenor / ((1 + monthly_rate)**tenor - 1)
+
 def render_header():
     """Render the application header"""
     st.markdown("""
@@ -230,22 +336,57 @@ def render_header():
     """, unsafe_allow_html=True)
 
 def render_market_parameters() -> Dict[str, float]:
-    """Render market parameters section and return values"""
+    """Render market parameters section"""
     st.sidebar.header("Market & Bank Parameters")
     
     col1, col2 = st.sidebar.columns(2)
+    
     with col1:
-        oibor_pct = st.number_input("OIBOR Base (%)", value=4.1, min_value=0.0, max_value=20.0, step=0.1)
-        cof_pct = st.number_input("Cost of Funds (%)", value=5.0, min_value=0.0, max_value=20.0, step=0.1)
-        opex_pct = st.number_input("Opex (%)", value=0.40, min_value=0.0, max_value=5.0, step=0.05)
+        oibor_base = st.number_input(
+            "OIBOR Base (%)", 
+            value=4.1, 
+            min_value=0.0, 
+            max_value=20.0, 
+            step=0.1
+        )
+        fed_shock = st.slider(
+            "Fed Shock (bps)", 
+            -300, 300, 0,
+            help="Adjustment to base OIBOR rate"
+        )
+        cof_pct = st.number_input(
+            "Cost of Funds (%)", 
+            value=5.0, 
+            min_value=0.0, 
+            max_value=20.0, 
+            step=0.1
+        )
         
     with col2:
-        fed_shock = st.slider("Fed Shock (bps)", -300, 300, 0)
-        target_nim = st.number_input("Target NIM (%)", value=2.5, min_value=0.0, max_value=10.0, step=0.1)
-        upfront_cost = st.number_input("Upfront Cost (%)", value=0.50, min_value=0.0, max_value=5.0, step=0.05)
+        target_nim = st.number_input(
+            "Target NIM (%)", 
+            value=2.5, 
+            min_value=0.0, 
+            max_value=10.0, 
+            step=0.1
+        )
+        opex_pct = st.number_input(
+            "Opex (%)", 
+            value=0.40, 
+            min_value=0.0, 
+            max_value=5.0, 
+            step=0.05
+        )
+        upfront_cost = st.number_input(
+            "Upfront Cost (%)", 
+            value=0.50, 
+            min_value=0.0, 
+            max_value=5.0, 
+            step=0.05
+        )
     
     return {
-        "oibor_pct": oibor_pct + (fed_shock / 100),
+        "oibor_pct": oibor_base + (fed_shock / 100),
         "cof_pct": cof_pct,
         "target_nim": target_nim,
         "opex_pct": opex_pct,
@@ -257,39 +398,77 @@ def render_loan_parameters() -> Dict:
     st.sidebar.header("Borrower & Product")
     
     product = st.sidebar.selectbox(
-        "Product",
-        ["Asset Backed Loan", "Term Loan", "Export Finance", 
-         "Working Capital", "Trade Finance", "Supply Chain Finance", 
-         "Vendor Finance"]
+        "Product Type",
+        PRODUCT_TYPES,
+        index=0,
+        help="Select the loan product type"
     )
     
     industry = st.sidebar.selectbox(
         "Industry",
-        ["Oil & Gas", "Construction", "Real Estate", "Manufacturing", 
-         "Trading", "Logistics", "Healthcare", "Hospitality", "Retail", 
-         "Mining", "Utilities", "Agriculture"]
+        INDUSTRIES,
+        index=0,
+        help="Select the borrower's industry"
     )
     
-    malaa_score = st.sidebar.slider("Mala'a Score", 300, 900, 650, 50)
-    stage = st.sidebar.selectbox("Stage", [1, 2, 3], index=0)
+    malaa_score = st.sidebar.slider(
+        "Mala'a Score", 
+        300, 900, 650, 50,
+        help="Borrower credit score (300-900)"
+    )
+    
+    stage = st.sidebar.selectbox(
+        "Stage", 
+        [1, 2, 3], 
+        index=0,
+        help="Loan stage (1=performing, 2=underperforming, 3=non-performing)"
+    )
     
     st.sidebar.header("Loan Details")
-    tenor = st.sidebar.number_input("Tenor (months)", 6, 360, 36)
+    tenor = st.sidebar.number_input(
+        "Tenor (months)", 
+        6, 360, 36,
+        help="Loan term in months"
+    )
     
     col1, col2 = st.sidebar.columns(2)
+    
     with col1:
-        loan_amount = st.number_input("Loan Amount (OMR)", min_value=0.0, value=100000.0, step=1000.0)
-        st.caption(f"In words: {num_to_words(int(loan_amount))}")
+        loan_amount = st.number_input(
+            "Loan Amount (OMR)", 
+            min_value=0.0, 
+            value=100000.0, 
+            step=1000.0,
+            help="Principal loan amount"
+        )
+        st.caption(f"**In words:** {num_to_words(int(loan_amount))}")
         
     with col2:
         if product in ["Asset Backed Loan", "Term Loan", "Export Finance"]:
-            ltv = st.number_input("LTV (%)", 0, 100, 70)
-            wc = sales = None
+            ltv = st.number_input(
+                "LTV (%)", 
+                0, 100, 70,
+                help="Loan-to-value ratio"
+            )
+            working_capital = None
+            sales = None
         else:
             ltv = None
-            wc = st.number_input("Working Capital (OMR)", min_value=0.0, value=50000.0, step=1000.0)
-            sales = st.number_input("Annual Sales (OMR)", min_value=0.0, value=200000.0, step=1000.0)
-            st.caption(f"In words: {num_to_words(int(sales))}")
+            working_capital = st.number_input(
+                "Working Capital (OMR)", 
+                min_value=0.0, 
+                value=50000.0, 
+                step=1000.0,
+                help="Borrower's working capital"
+            )
+            sales = st.number_input(
+                "Annual Sales (OMR)", 
+                min_value=0.0, 
+                value=200000.0, 
+                step=1000.0,
+                help="Borrower's annual sales"
+            )
+            st.caption(f"**Sales in words:** {num_to_words(int(sales))}")
     
     return {
         "product": product,
@@ -299,47 +478,170 @@ def render_loan_parameters() -> Dict:
         "tenor": tenor,
         "amount": loan_amount,
         "ltv": ltv,
-        "working_capital": wc,
+        "working_capital": working_capital,
         "sales": sales
     }
 
-def render_loan_book_section():
-    """Render the loan book upload section"""
+def render_loan_book_upload() -> Optional[pd.DataFrame]:
+    """Render loan book upload section"""
     st.sidebar.header("Loan Book Processing")
     
-    uploaded_file = st.sidebar.file_uploader("Upload Loan Book (CSV)", type=["csv"])
-    st.sidebar.download_button(
-        label="Download Template",
-        data="""loan_id,product,industry,malaa_score,tenor_months,loan_quantum_omr,limit_omr,working_capital_omr,sales_omr,median_utilization,ltv_pct,stage,pd_pct,lgd_pct,provision_rate_pct,fees_pct,opex_pct
-1,Term Loan,Construction,550,36,500000,,,60,2,0.8,32,,,,0.4
-2,Working Capital,Manufacturing,720,24,,200000,800000,40,,1,,,,0.4
-3,Asset Backed Loan,Real Estate,450,60,1000000,,,75,3,0.9,38,,,,0.4""",
-        file_name="loan_book_template.csv",
-        mime="text/csv"
+    uploaded_file = st.sidebar.file_uploader(
+        "Upload Loan Book (CSV)", 
+        type=["csv"],
+        help="Upload portfolio of loans for batch processing"
     )
     
-    return uploaded_file
+    # Create and provide template
+    template = pd.DataFrame(columns=[
+        "loan_id", "product", "industry", "malaa_score", "tenor_months",
+        "loan_quantum_omr", "limit_omr", "working_capital_omr", "sales_omr",
+        "median_utilization", "ltv_pct", "stage", "pd_pct", "lgd_pct",
+        "provision_rate_pct", "fees_pct", "opex_pct"
+    ])
+    
+    st.sidebar.download_button(
+        "Download Template",
+        data=template.to_csv(index=False),
+        file_name="loan_book_template.csv",
+        mime="text/csv",
+        help="Download CSV template"
+    )
+    
+    if uploaded_file is not None:
+        try:
+            loan_book = pd.read_csv(uploaded_file)
+            return loan_book
+        except Exception as e:
+            st.sidebar.error(f"Error reading file: {e}")
+            return None
+    return None
 
-def calculate_single_loan(
-    loan_params: Dict,
-    market_params: Dict
-) -> pd.DataFrame:
-    """Calculate pricing for a single loan across all buckets"""
-    # Calculate base risk
+def display_pricing_results(results_df: pd.DataFrame):
+    """Display the pricing results"""
+    st.subheader("Pricing Results")
+    
+    for _, row in results_df.iterrows():
+        with st.expander(f"{row['Bucket']} Bucket Details", expanded=row['Bucket'] == "Medium"):
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric("Representative Rate", f"{row['rep_rate']:.2f}%")
+                st.metric("Minimum Rate", f"{row['rate_min']:.2f}%")
+                st.metric("Maximum Rate", f"{row['rate_max']:.2f}%")
+            
+            with col2:
+                st.metric("Spread over OIBOR (Min)", f"{row['spread_min']} bps")
+                st.metric("Spread over OIBOR (Rep)", f"{(row['rep_rate'] - row['oibor_pct'])*100:.0f} bps")
+                st.metric("Spread over OIBOR (Max)", f"{row['spread_max']} bps")
+            
+            with col3:
+                st.metric("Probability of Default", f"{row['PD']:.2f}%")
+                st.metric("Loss Given Default", f"{row['LGD']:.2f}%")
+                st.metric("Annual Provision", f"{row['Provision_Rate']*100:.2f}%")
+            
+            # NIM calculation
+            nim_status = "warning" if row['NIM'] < row['Target_NIM'] else "success"
+            st.markdown(
+                f"**Net Interest Margin (NIM):** "
+                f"<span class='{nim_status}'>{row['NIM']:.2f}%</span> "
+                f"(Target: {row['Target_NIM']}%)",
+                unsafe_allow_html=True
+            )
+            
+            if row['EMI']:
+                st.markdown(f"**EMI:** OMR {row['EMI']:,.2f} (for {row['tenor']} months)")
+            
+            if row['be_months']:
+                be_status = "success" if row['be_months'] <= row['tenor'] else "warning"
+                st.markdown(
+                    f"**Breakeven Period:** "
+                    f"<span class='{be_status}'>{row['be_months']} months</span>",
+                    unsafe_allow_html=True
+                )
+            
+            st.markdown("---")
+            st.markdown("**Risk Factors:**")
+            col_f1, col_f2, col_f3 = st.columns(3)
+            
+            with col_f1:
+                st.markdown(f"- **Product Risk:** {row['Product_Factor']:.2f}x")
+                st.markdown(f"- **Borrower Risk:** {row['Borrower_Risk']}")
+            
+            with col_f2:
+                st.markdown(f"- **Industry Risk:** {row['Industry_Factor']:.2f}x")
+                st.markdown(f"- **Composite Score:** {row['Risk_Score']:.2f}")
+            
+            with col_f3:
+                if row['ltv']:
+                    st.markdown(f"- **LTV Adjustment:** {row['ltv']}%")
+                else:
+                    st.markdown(f"- **WC/Sales Ratio:** {row['wc_ratio']:.2f}" if row['wc_ratio'] else "-")
+
+def generate_results_dataframe(loan_params: Dict, market_params: Dict, pricing_results: List) -> pd.DataFrame:
+    """Generate final results dataframe with all calculated metrics"""
+    results = []
+    buckets = ["Low", "Medium", "High"]
+    
+    for i, bucket in enumerate(buckets):
+        pricing = pricing_results[i]
+        
+        # Calculate WC/Sales ratio if utilization loan
+        wc_ratio = None
+        if loan_params['working_capital'] and loan_params['sales']:
+            wc_ratio = loan_params['working_capital'] / loan_params['sales']
+        
+        # Calculate NIM
+        fees_pct = 0.4 if loan_params['product'] in ["Supply Chain Finance", "Vendor Finance", 
+                                                   "Working Capital", "Export Finance"] else 0.0
+        nim = pricing['rep_rate'] + fees_pct - (
+            market_params['cof_pct'] + pricing['Provision_Rate']*100 + market_params['opex_pct']
+        )
+        
+        results.append({
+            "Bucket": bucket,
+            "Risk_Score": pricing['risk_score'],
+            "Product_Factor": pricing['product_factor'],
+            "Industry_Factor": pricing['industry_factor'],
+            "Borrower_Risk": malaa_risk_label(loan_params['malaa_score']),
+            "tenor": loan_params['tenor'],
+            "amount": loan_params['amount'],
+            "ltv": loan_params.get('ltv'),
+            "wc_ratio": wc_ratio,
+            "rate_min": pricing['rate_min'],
+            "rate_max": pricing['rate_max'],
+            "rep_rate": pricing['rep_rate'],
+            "spread_min": pricing['spread_min'],
+            "spread_max": pricing['spread_max'],
+            "oibor_pct": pricing['oibor_pct'],
+            "PD": pricing['PD'],
+            "LGD": pricing['LGD'],
+            "Provision_Rate": pricing['Provision_Rate'],
+            "EMI": pricing.get('emi'),
+            "NIM": nim,
+            "Target_NIM": market_params['target_nim'],
+            "be_months": pricing.get('be_periods')
+        })
+    
+    return pd.DataFrame(results)
+
+def calculate_and_display_single_loan(loan_params: Dict, market_params: Dict):
+    """Calculate and display pricing for a single loan"""
+    # Calculate base risk factors
     risk_base, product_factor, industry_factor = calculate_risk_factors(
         loan_params["product"],
         loan_params["industry"],
         loan_params["malaa_score"],
-        loan_params["ltv"],
-        loan_params["working_capital"],
-        loan_params["sales"]
+        loan_params.get("ltv"),
+        loan_params.get("working_capital"),
+        loan_params.get("sales")
     )
     
     # Calculate PD and LGD
     pd, lgd = calculate_pd_lgd(
         risk_base,
         loan_params["product"],
-        loan_params["ltv"],
+        loan_params.get("ltv"),
         loan_params["stage"]
     )
     
@@ -347,8 +649,9 @@ def calculate_single_loan(
     fee_products = ["Supply Chain Finance", "Vendor Finance", "Working Capital", "Export Finance"]
     fees_pct = 0.4 if loan_params["product"] in fee_products else 0.0
     
-    results = []
+    # Calculate pricing for each bucket
     buckets = ["Low", "Medium", "High"]
+    pricing_results = []
     
     for bucket in buckets:
         # Calculate pricing for this bucket
@@ -359,95 +662,115 @@ def calculate_single_loan(
             market_params["cof_pct"],
             market_params["opex_pct"],
             fees_pct,
-            bucket
+            bucket,
+            loan_params["product"]
         )
         
-        # Prepare results
-        result = {
-            "Bucket": bucket,
-            "Risk_Score": risk_base,
-            "Product_Factor": product_factor,
-            "Industry_Factor": industry_factor,
-            **pricing,
+        # Calculate repayment schedule for medium bucket
+        if bucket == "Medium" and loan_params.get("ltv"):
+            emi, annual_net, nim, schedule, be_periods = calculate_repayment_schedule(
+                loan_params["amount"],
+                pricing["rep_rate"],
+                loan_params["tenor"],
+                market_params["cof_pct"],
+                pd * lgd / 10000,
+                market_params["opex_pct"],
+                market_params["upfront_cost"]
+            )
+            pricing["emi"] = emi
+            pricing["be_periods"] = be_periods
+        
+        # Store all relevant metrics
+        pricing.update({
+            "risk_score": risk_base,
+            "product_factor": product_factor,
+            "industry_factor": industry_factor,
             "PD": pd,
             "LGD": lgd,
             "Provision_Rate": pd * lgd / 10000,
-            "Fees_Pct": fees_pct,
-            "Opex_Pct": market_params["opex_pct"],
-            "Upfront_Cost_Pct": market_params["upfront_cost"],
-            "Target_NIM": market_params["target_nim"]
-        }
+            "oibor_pct": market_params["oibor_pct"]
+        })
         
-        results.append(result)
+        pricing_results.append(pricing)
     
-    return pd.DataFrame(results)
+    # Generate and display results
+    results_df = generate_results_dataframe(loan_params, market_params, pricing_results)
+    display_pricing_results(results_df)
+    
+    # Optional: Show repayment schedule for medium bucket
+    if loan_params.get("ltv") and pricing_results[1].get("emi"):
+        with st.expander("View Repayment Schedule (Medium Bucket)"):
+            schedule_data = calculate_repayment_schedule(
+                loan_params["amount"],
+                pricing_results[1]["rep_rate"],
+                loan_params["tenor"],
+                market_params["cof_pct"],
+                pd * lgd / 10000,
+                market_params["opex_pct"],
+                market_params["upfront_cost"]
+            )[3]
+            
+            st.dataframe(
+                pd.DataFrame(schedule_data).style.format({
+                    "Beginning_Balance": "{:,.2f}",
+                    "Principal": "{:,.2f}",
+                    "Interest": "{:,.2f}",
+                    "Provision": "{:,.2f}",
+                    "Funding_Cost": "{:,.2f}",
+                    "Opex": "{:,.2f}",
+                    "Net_Income": "{:,.2f}",
+                    "Cumulative_Net": "{:,.2f}"
+                }),
+                height=400
+            )
 
-def display_results(results_df: pd.DataFrame):
-    """Display the pricing results in the main area"""
-    st.subheader("Pricing Results")
+def render_assumptions_tab():
+    """Render the model assumptions tab"""
+    st.header("Model Assumptions")
     
-    for _, row in results_df.iterrows():
-        with st.expander(f"{row['Bucket']} Bucket Details"):
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric("Rep Rate", f"{row['rep_rate']:.2f}%")
-                st.metric("Min Rate", f"{row['rate_min']:.2f}%")
-                st.metric("Max Rate", f"{row['rate_max']:.2f}%")
-            
-            with col2:
-                st.metric("Spread Min", f"{row['spread_min']} bps")
-                st.metric("Spread Rep", f"{(row['rep_rate'] - row['oibor_pct'])*100:.0f} bps")
-                st.metric("Spread Max", f"{row['spread_max']} bps")
-            
-            with col3:
-                st.metric("PD", f"{row['PD']:.2f}%")
-                st.metric("LGD", f"{row['LGD']:.2f}%")
-                st.metric("Provision", f"{row['Provision_Rate']*100:.2f}%")
-            
-            # NIM calculation
-            nim = row['rep_rate'] + row['Fees_Pct'] - (row['cof_pct'] + row['Provision_Rate']*100 + row['Opex_Pct'])
-            nim_status = "warning" if nim < row['Target_NIM'] else "success"
-            
-            st.write(f"**NIM:** <span class='{nim_status}'>{nim:.2f}%</span> (Target: {row['Target_NIM']}%)", unsafe_allow_html=True)
-            
-            # Risk factors
-            st.write("---")
-            st.write("**Risk Factors:**")
-            st.write(f"- Product: {row['Product_Factor']:.2f}x")
-            st.write(f"- Industry: {row['Industry_Factor']:.2f}x")
-            st.write(f"- Composite: {row['Risk_Score']:.2f}")
-
-# --- MAIN APPLICATION ---
-def main():
-    # Render the application header
-    render_header()
+    with st.expander("Risk Factors"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Product Risk Factors")
+            product_factors = {
+                "Asset Backed Loan": 1.35,
+                "Term Loan": 1.20,
+                "Export Finance": 1.10,
+                "Working Capital": 0.95,
+                "Trade Finance": 0.85,
+                "Supply Chain Finance": 0.90,
+                "Vendor Finance": 0.95
+            }
+            st.table(pd.DataFrame.from_dict(product_factors, orient='index', columns=['Factor']))
+        
+        with col2:
+            st.subheader("Industry Risk Factors")
+            industry_factors = {
+                "Construction": 1.40, "Real Estate": 1.30,
+                "Mining": 1.30, "Hospitality": 1.25,
+                "Retail": 1.15, "Manufacturing": 1.10,
+                "Trading": 1.05, "Logistics": 1.00,
+                "Oil & Gas": 0.95, "Healthcare": 0.90,
+                "Utilities": 0.85, "Agriculture": 1.15
+            }
+            st.table(pd.DataFrame.from_dict(industry_factors, orient='index', columns=['Factor']))
     
-    # Get all user inputs from the sidebar
-    market_params = render_market_parameters()
-    loan_params = render_loan_parameters()
-    uploaded_file = render_loan_book_section()
+    with st.expander("Pricing Parameters"):
+        st.markdown("""
+        - **Base Spread Curve:** 75 bps + 350 × (Risk - 1)
+        - **Bucket Multipliers:** Low (0.9x), Medium (1.0x), High (1.25x)
+        - **Spread Floors:** Low (150 bps), Medium (225 bps), High (325 bps)
+        - **Adders:**
+          - Product: ABL (+125 bps), Term/Export (+75 bps)
+          - Mala'a Score: High (+175), Med-High (+125), Medium (+75)
+        """)
     
-    # Main content area
-    tab1, tab2, tab3, tab4 = st.tabs(["Single Loan Pricing", "Loan Book Pricing", "Concentration & Provisions", "Assumptions"])
-    
-    with tab1:
-        if st.button("Calculate Pricing"):
-            with st.spinner("Calculating pricing across all buckets..."):
-                results = calculate_single_loan(loan_params, market_params)
-                display_results(results)
-    
-    with tab2:
-        if uploaded_file is not None:
-            st.write("Loan book processing would go here")
-        else:
-            st.info("Upload a loan book CSV file to enable batch processing")
-    
-    with tab3:
-        st.write("Concentration and provisions analysis would appear here")
-    
-    with tab4:
-        st.write("Model assumptions and factor mappings would appear here")
-
-if __name__ == "__main__":
-    main()
+    with st.expander("Methodology"):
+        st.markdown("""
+        1. **Composite Risk Score:**
+           - Product × Industry × Mala'a × (LTV or WC/Sales factor)
+           - Clipped to 0.4-3.5 range
+        
+        2. **PD Calculation:** Piecewise interpolation
+           - 0.4 → 0.3%, 1.0 → 1.0%,
