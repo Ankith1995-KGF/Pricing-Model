@@ -769,21 +769,22 @@ def render_assumptions_tab():
           - Mala'a Score: High (+175), Med-High (+125), Medium (+75)
         """)
 
-    with st.expander("Methodology"):
+       with st.expander("Methodology"):
         st.markdown("""
         1. **Composite Risk Score:**
            - Product × Industry × Mala'a × (LTV or WC/Sales factor)
            - Clipped to 0.4-3.5 range
-        
+
         2. **PD Calculation:** Piecewise interpolation
            - 0.4 → 0.3%, 1.0 → 1.0%, 2.0 → 3.0%, 3.5 → 6.0%
            - Stage multiplier: Stage 2 (×2.5), Stage 3 (×6.0)
-        
+
         3. **LGD Calculation:**
            - Base: ABL=32%, Term=38%, Export=35%, Others=30%
            - LTV adjustment: +0.25% per LTV% >50%
         """)
-       with st.expander("NIM Calculation"):
+
+    with st.expander("NIM Calculation"):
         st.markdown("""
         - **NIM** = Representative Rate + Fees − (Cost of Funds + Provision + Opex)
         - Target NIM is compared against calculated NIM to flag performance
