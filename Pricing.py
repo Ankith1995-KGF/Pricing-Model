@@ -534,7 +534,7 @@ def main():
             # You can add batch processing and results display here
 
     with tab3:
-        def render_assumptions_tab():
+       def render_assumptions_tab():
     st.header("Model Assumptions")
 
     with st.expander("Risk Factors"):
@@ -543,19 +543,31 @@ def main():
         with col1:
             st.subheader("Product Risk Factors")
             st.table(pd.DataFrame.from_dict({
-                "Asset Backed Loan": 1.35, "Term Loan": 1.20, "Export Finance": 1.10,
-                "Working Capital": 0.95, "Trade Finance": 0.85,
-                "Supply Chain Finance": 0.90, "Vendor Finance": 0.95
-            }, orient="index", columns=["Factor"]))
+                "Asset Backed Loan": 1.35,
+                "Term Loan": 1.20,
+                "Export Finance": 1.10,
+                "Working Capital": 0.95,
+                "Trade Finance": 0.85,
+                "Supply Chain Finance": 0.90,
+                "Vendor Finance": 0.95
+            }, orient='index', columns=['Factor']))
 
         with col2:
             st.subheader("Industry Risk Factors")
             st.table(pd.DataFrame.from_dict({
-                "Construction": 1.40, "Real Estate": 1.30, "Mining": 1.30,
-                "Hospitality": 1.25, "Retail": 1.15, "Manufacturing": 1.10,
-                "Trading": 1.05, "Logistics": 1.00, "Oil & Gas": 0.95,
-                "Healthcare": 0.90, "Utilities": 0.85, "Agriculture": 1.15
-            }, orient="index", columns=["Factor"]))
+                "Construction": 1.40,
+                "Real Estate": 1.30,
+                "Mining": 1.30,
+                "Hospitality": 1.25,
+                "Retail": 1.15,
+                "Manufacturing": 1.10,
+                "Trading": 1.05,
+                "Logistics": 1.00,
+                "Oil & Gas": 0.95,
+                "Healthcare": 0.90,
+                "Utilities": 0.85,
+                "Agriculture": 1.15
+            }, orient='index', columns=['Factor']))
 
     with st.expander("Pricing Parameters"):
         st.markdown("""
