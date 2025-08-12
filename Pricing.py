@@ -6,41 +6,6 @@ from typing import Dict, Tuple, List
 # Set page configuration
 st.set_page_config(page_title="rt 360 risk-adjusted pricing model", page_icon="💠", layout="wide")
 
-# Custom CSS for styling
-st.markdown("""
-<style>
-    .st-emotion-cache-1v0mbdj {
-        border: 2px solid #1e88e5;
-        border-radius: 8px;
-        padding: 20px;
-        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-    }
-    .header {
-        display: flex;
-        align-items: center;
-        margin-bottom: 20px;
-    }
-    .header-title {
-        font-size: 24px;
-    }
-    .rt {
-        color: #1e88e5;
-        font-weight: bold;
-    }
-    .three60 {
-        color: #4caf50;
-        font-weight: bold;
-    }
-    .kpi-card {
-        background: white;
-        border-radius: 8px;
-        padding: 15px;
-        margin-bottom: 15px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-</style>
-""", unsafe_allow_html=True)
-
 # --- Helper Functions ---
 def num_to_words(n: int) -> str:
     """Convert integer to words representation (for OMR amounts)"""
@@ -225,4 +190,140 @@ def calculate_pricing(
         "Hospitality": 1.25, "Retail": 1.15, "Manufacturing": 1.10,
         "Trading": 1.05, "Logistics": 1.00, "Oil & Gas": 0.95,
         "Healthcare": 0.90, "Utilities": 0.85, "Agriculture": 1.15
-    }.get()
+    }.get(industry, 1.0)
+
+    malaa_factor = float(np.clip(1.45 - (malaa_score - 300) * (0.90 / 600), 0.55, 1.45))
+    
+    # Calculate risk base
+    if ltv is not None and ltv > 0:
+        ltv_factor = float(np.clip(0.55 + 0.0075 * ltv, 0.80, 1.50))
+        risk_base = np.clip(product_factor * industry_factor * malaa_factor * ltv_factor, 0.4, 3.5)
+    else:
+        wcs_factor = 1.20 if sales <= 0 else float(np.clip(0.70 + 1.00 * (working_capital / sales), 0.70, 1.70))
+        risk_base = np.clip(product_factor * industry_factor * malaa_factor * wcs_factor, 0.4, 3.5)
+
+    # Calculate PD and LGD
+    pd = pd_from_risk(risk_base, stage)
+    lgd = lgd_from_product_ltv(product, ltv)
+    provision_rate = pd * lgd / 100
+
+    # Pricing calculations
+    buckets = ["Low", "Medium", "High"]
+    results = []
+
+    for bucket in buckets:
+        multiplier = {"Low": 0.90, "Medium": 1.00, "High": 1.25}[bucket]
+        risk_b = np.clip(risk_base * multiplier, 0.4, 3.5)
+
+        # Calculate spreads
+        raw_spread_bps = 75 + 350 * (risk_b - 1)
+        industry_floor_addon = 100 if industry_factor >= 1.25 else 50 if industry_factor >= 1.10 else 0
+        product_floor_addon = 125 if product == "Asset Backed Loan" else 75 if product in ["Term Loan", "Export Finance"] else 0
+        borrower_floor_addon = {"High": 175, "Med-High": 125, "Medium": 75, "Low": 0}[malaa_risk_label(malaa_score)]
+        
+        sum_floors = max(125, 150 + industry_floor_addon + product_floor_addon + borrower_floor_addon)
+        center_spread_bps = max(raw_spread_bps, sum_floors)
+
+        # Calculate rates
+        spread_min = center_spread_bps - (60 if bucket == "Low" else 90 if bucket == "Medium" else 140)
+        spread_max = center_spread_bps + (60 if bucket == "Low" else 90 if bucket == "Medium" else 140)
+        
+        rate_min = max(5.0, oibor_pct + spread_min / 100)
+        rate_max = max(5.0, oibor_pct + spread_max / 100)
+        rep_rate = (rate_min + rate_max) / 2
+
+        # NIM calculations
+        fees_pct = 0.4 if product in ["Supply Chain Finance", "Vendor Finance", "Working Capital", "Export Finance"] else 0.0
+        nim_rep = rep_rate + fees_pct - (cof_pct + provision_rate + opex_pct)
+        required_rate = target_nim_pct + cof_pct + provision_rate + opex_pct - fees_pct
+
+        # Enforce NIM floor
+        if rep_rate < required_rate:
+            center_spread_bps = required_rate - fees_pct + (cof_pct + provision_rate + opex_pct)
+            spread_min = center_spread_bps - (60 if bucket == "Low" else 90 if bucket == "Medium" else 140)
+            spread_max = center_spread_bps + (60 if bucket == "Low" else 90 if bucket == "Medium" else 140)
+            rate_min = max(5.0, oibor_pct + spread_min / 100)
+            rate_max = max(5.0, oibor_pct + spread_max / 100)
+            rep_rate = (rate_min + rate_max) / 2
+
+        # Cash flow calculations
+        if ltv is not None and ltv > 0:
+            cashflow = calculate_cashflow(loan_quantum, rep_rate, tenor, cof_pct, provision_rate, opex_pct, fees_pct)
+        else:
+            cashflow = calculate_utilization_metrics(working_capital, utilization, rep_rate, cof_pct, provision_rate, opex_pct, fees_pct)
+
+        results.append({
+            "Bucket": bucket,
+            "Float_Min_over_OIBOR_bps": int(spread_min),
+            "Float_Max_over_OIBOR_bps": int(spread_max),
+            "Rate_Min_%": round(rate_min, 2),
+            "Rate_Max_%": round(rate_max, 2),
+            "Rep_Rate_%": round(rep_rate, 2),
+            "EMI_OMR": cashflow['emi'],
+            "Annual_Interest_Income_OMR": round(cashflow['annual_interest'], 2),
+            "Annual_Fee_Income_OMR": round(cashflow['annual_fees'], 2),
+            "Annual_Funding_Cost_OMR": round(cashflow['annual_funding'], 2),
+            "Annual_Provision_OMR": round(cashflow['annual_provision'], 2),
+            "Annual_Opex_OMR": round(cashflow['annual_opex'], 2),
+            "Net_Interest_Income_OMR": round(cashflow['annual_interest'] + cashflow['annual_fees'] - 
+                                              (cashflow['annual_funding'] + cashflow['annual_provision'] + 
+                                               cashflow['annual_opex']), 2),
+            "NIM_%": round(cashflow['nim'], 2),
+            "Breakeven_Min_Months": cashflow['be_min'],
+            "Breakeven_Rep_Months": cashflow['be_rep'],
+            "Breakeven_Max_Months": cashflow['be_max'],
+            "Optimal_Utilization_%": utilization if utilization > 0 else "-",
+            "Borrower_Risk_Label": malaa_risk_label(malaa_score),
+            "Industry_Risk_Factor": round(industry_factor, 2),
+            "Product_Risk_Factor": round(product_factor, 2),
+            "Composite_Risk_Score": round(risk_base, 2)
+        })
+
+    return pd.DataFrame(results)
+
+# --- UI Layout ---
+st.title("rt 360 risk-adjusted pricing model for Corporate Lending")
+
+# Sidebar
+st.sidebar.header("Market & Bank Parameters")
+oibor_pct_base = st.sidebar.number_input("OIBOR Base (%)", value=4.1)
+fed_shock_bps = st.sidebar.slider("Fed Shock (bps)", -300, 300, 0)
+oibor_pct = oibor_pct_base + fed_shock_bps / 100
+cost_of_funds_pct = st.sidebar.number_input("Cost of Funds (%)", value=5.0)
+target_nim_pct = st.sidebar.number_input("Target NIM (%)", value=2.5)
+fees_income_pct_default = st.sidebar.number_input("Fees Income (%)", value=0.4)
+opex_pct = st.sidebar.number_input("Opex (%)", value=0.40)
+upfront_cost_pct = st.sidebar.number_input("Upfront Cost (%)", value=0.50)
+
+# Borrower & Product
+st.sidebar.header("Borrower & Product")
+product = st.sidebar.selectbox("Product", ["Asset Backed Loan", "Term Loan", "Export Finance", 
+                                             "Working Capital", "Trade Finance", "Supply Chain Finance", 
+                                             "Vendor Finance"])
+industry = st.sidebar.selectbox("Industry", ["Oil & Gas", "Construction", "Real Estate", 
+                                               "Manufacturing", "Trading", "Logistics", 
+                                               "Healthcare", "Hospitality", "Retail", 
+                                               "Mining", "Utilities", "Agriculture"])
+malaa_score = st.sidebar.slider("Mala’a Score", 300, 900, 300, 50)
+
+# Loan Details
+st.sidebar.header("Loan Details")
+tenor_months = st.sidebar.number_input("Tenor (months)", 6, 360, 12)
+loan_quantum_omr = st.sidebar.number_input("Loan Quantum (OMR)", 0)
+st.caption(f"In words: {num_to_words(int(loan_quantum_omr))}")
+
+# Upload Loan Book
+st.sidebar.header("Upload Loan Book (CSV)")
+uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
+if uploaded_file is not None:
+    loan_book_df = pd.read_csv(uploaded_file)
+    st.write(loan_book_df)
+
+# Compute Pricing Button
+if st.sidebar.button("Compute Pricing"):
+    # Call the pricing calculation function
+    pricing_results = calculate_pricing(
+        product, industry, malaa_score, loan_quantum_omr, tenor_months,
+        ltv=None, working_capital=0, sales=0, utilization=0, stage=1,
+        oibor_pct=oibor_pct, cof_pct=cost_of_funds_pct, target_nim_pct=target_nim_pct, 
+        fees_pct=fees_income_pct_default, opex_pct=opex_pct, upfront_cost_pct=
