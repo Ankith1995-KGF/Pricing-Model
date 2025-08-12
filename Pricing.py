@@ -1,657 +1,394 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>BankRisk Pro - Loan Pricing Model</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        .card {
-            background: white;
-            border: 2px solid #1666d3;
-            border-radius: 10px;
-            padding: 16px 20px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.06);
-        }
-        .big {
-            font-size:28px;
-            font-weight:800;
-        }
-        .blue {
-            color:#1666d3;
-        }
-        .green {
-            color:#18a05e;
-        }
-        .small {
-            color:#6b7280;
-            font-size:12px;
-        }
-    </style>
-</head>
-<body class="bg-gray-50">
-    <div class="container mx-auto px-4 py-8">
-        <div class="big mb-8">
-            <span class="blue">BankRisk</span> <span class="green">Pro</span> — Advanced Loan Pricing for Financial Institutions
-        </div>
+import math
+from typing import Dict, Any, List, Tuple
+import numpy as np
+import pandas as pd
+import streamlit as st
 
-        <div class="flex flex-col md:flex-row gap-6">
-            <!-- Sidebar -->
-            <div class="w-full md:w-1/3 lg:w-1/4">
-                <div class="card">
-                    <h2 class="text-xl font-bold mb-4">Market & Bank Assumptions</h2>
-                    <div class="grid gap-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">OIBOR (Reference Rate, %)</label>
-                            <input type="number" id="oibor" value="4.10" step="0.01" class="w-full p-2 border border-gray-300 rounded">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Cost of Funds (%, annual)</label>
-                            <input type="number" id="cof" value="5.00" step="0.01" class="w-full p-2 border border-gray-300 rounded">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Target NIM (%, floor)</label>
-                            <input type="number" id="target_nim" value="2.50" step="0.01" class="w-full p-2 border border-gray-300 rounded">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Operating Expense (%, annual)</label>
-                            <input type="number" id="opex" value="0.40" step="0.01" class="w-full p-2 border border-gray-300 rounded">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Default Fees (%, WC/SCF/VF/Export)</label>
-                            <input type="number" id="fees_default" value="0.40" step="0.01" class="w-full p-2 border border-gray-300 rounded">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Upfront Origination Cost (%, one-time)</label>
-                            <input type="number" id="upfront_cost" value="0.50" step="0.01" class="w-full p-2 border border-gray-300 rounded">
-                        </div>
-                    </div>
+# ---------------- Global formatting (2 decimals) ----------------
+pd.options.display.float_format = lambda x: f"{x:.2f}"
 
-                    <hr class="my-4">
+def f2(x: float) -> float:
+    try:
+        return float(np.round(float(x), 2))
+    except Exception:
+        return float("nan")
 
-                    <h2 class="text-xl font-bold mb-4">Borrower & Product</h2>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Product</label>
-                        <select id="product" class="w-full p-2 border border-gray-300 rounded">
-                            <option value="Asset Backed Loan">Asset Backed Loan</option>
-                            <option value="Term Loan">Term Loan</option>
-                            <option value="Export Finance">Export Finance</option>
-                            <option value="Working Capital">Working Capital</option>
-                            <option value="Trade Finance">Trade Finance</option>
-                            <option value="Supply Chain Finance">Supply Chain Finance</option>
-                            <option value="Vendor Finance">Vendor Finance</option>
-                        </select>
-                    </div>
-                    <div class="mt-3">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Borrower Industry</label>
-                        <select id="industry" class="w-full p-2 border border-gray-300 rounded">
-                            <option value="Construction">Construction</option>
-                            <option value="Real Estate">Real Estate</option>
-                            <option value="Mining">Mining</option>
-                            <option value="Hospitality">Hospitality</option>
-                            <option value="Retail">Retail</option>
-                            <option value="Manufacturing">Manufacturing</option>
-                            <option value="Trading">Trading</option>
-                            <option value="Logistics">Logistics</option>
-                            <option value="Oil & Gas">Oil & Gas</option>
-                            <option value="Healthcare">Healthcare</option>
-                            <option value="Utilities">Utilities</option>
-                            <option value="Agriculture">Agriculture</option>
-                        </select>
-                    </div>
-                    <div class="mt-3">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Mala'a Credit Score (300-900)</label>
-                        <input type="number" id="malaa" min="300" max="900" value="750" class="w-full p-2 border border-gray-300 rounded">
-                    </div>
-                    <div class="mt-3">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">IFRS-9 Stage</label>
-                        <select id="stage" class="w-full p-2 border border-gray-300 rounded">
-                            <option value="1">1=Performing</option>
-                            <option value="2">2=Underperforming</option>
-                            <option value="3">3=Impaired</option>
-                        </select>
-                    </div>
+def fmt2(x) -> str:
+    try:
+        return f"{f2(float(x)):.2f}"
+    except Exception:
+        return ""
 
-                    <hr class="my-4">
+# ---------------- Tiny number-to-words helper (integers) ----------------
+def num_to_words(n: int) -> str:
+    units = ["","one","two","three","four","five","six","seven","eight","nine"]
+    teens = ["ten","eleven","twelve","thirteen","fourteen","fifteen","sixteen","seventeen","eighteen","nineteen"]
+    tens = ["","","twenty","thirty","forty","fifty","sixty","seventy","eighty","ninety"]
+    def chunk(x:int)->str:
+        if x==0: return ""
+        if x<10: return units[x]
+        if x<20: return teens[x-10]
+        if x<100: return tens[x//10] + ("" if x%10==0 else " "+units[x%10])
+        if x<1000: return units[x//100]+" hundred"+("" if x%100==0 else " "+chunk(x%100))
+        return ""
+    if n==0: return "zero"
+    parts=[]
+    for div,word in [(10**9,"billion"),(10**6,"million"),(10**3,"thousand")]:
+        if n>=div: parts.append(chunk(n//div)+" "+word); n%=div
+    if n>0: parts.append(chunk(n))
+    return " ".join(parts)
 
-                    <h2 class="text-xl font-bold mb-4">Loan Details</h2>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Tenor (months, 6-360)</label>
-                        <input type="number" id="tenor" min="6" max="360" value="36" class="w-full p-2 border border-gray-300 rounded">
-                    </div>
-                    <div class="mt-3">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Loan Quantum (OMR)</label>
-                        <input type="number" id="loan_quantum" value="100000.00" step="0.01" class="w-full p-2 border border-gray-300 rounded">
-                        <p class="small mt-1 italic" id="loan_in_words">In words: one hundred thousand Omani Rials</p>
-                    </div>
-                    <div id="ltv_container" class="mt-3">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Loan-to-Value (LTV, %)</label>
-                        <input type="number" id="ltv" value="70.00" step="0.01" class="w-full p-2 border border-gray-300 rounded">
-                    </div>
-                    <div id="sales_container" class="mt-3 hidden">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Annual Sales (OMR)</label>
-                        <input type="number" id="sales" value="600000.00" step="0.01" class="w-full p-2 border border-gray-300 rounded">
-                        <p class="small mt-1 italic" id="sales_in_words">In words: six hundred thousand Omani Rials</p>
-                    </div>
+# ---------------- Core helpers ----------------
+PRODUCTS_FUND = ["Asset Backed Loan","Term Loan","Export Finance"]
+PRODUCTS_UTIL = ["Working Capital","Trade Finance","Supply Chain Finance","Vendor Finance"]
 
-                    <button id="compute" class="w-full mt-6 bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg shadow-md">
-                        Calculate Loan Pricing
-                    </button>
-                </div>
-            </div>
+product_factor: Dict[str,float] = {
+    "Asset Backed Loan":1.35,"Term Loan":1.20,"Export Finance":1.10,
+    "Vendor Finance":0.95,"Supply Chain Finance":0.90,"Trade Finance":0.85,"Working Capital":0.95
+}
+industry_factor: Dict[str,float] = {
+    "Construction":1.40,"Real Estate":1.30,"Mining":1.30,"Hospitality":1.25,
+    "Retail":1.15,"Manufacturing":1.10,"Trading":1.05,"Logistics":1.00,
+    "Oil & Gas":0.95,"Healthcare":0.90,"Utilities":0.85,"Agriculture":1.15
+}
+u_med_map: Dict[str,float] = {
+    "Trading":0.65,"Manufacturing":0.55,"Construction":0.40,"Logistics":0.60,"Retail":0.50,
+    "Healthcare":0.45,"Hospitality":0.35,"Oil & Gas":0.50,"Real Estate":0.30,"Utilities":0.55,
+    "Mining":0.45,"Agriculture":0.40
+}
 
-            <!-- Main Content -->
-            <div class="w-full md:w-2/3 lg:w-3/4">
-                <div class="card">
-                    <h2 class="text-xl font-bold mb-4">Pricing Buckets (Low / Medium / High)</h2>
-                    <div id="results">
-                        <div class="text-blue-600">Enter inputs in the left pane and click <strong>Compute Pricing</strong>.</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
+def clamp(x: float, lo: float, hi: float) -> float: return max(lo, min(x, hi))
 
-    <script>
-        // Number to words function
-        function numToWords(n) {
-            const units = ["","one","two","three","four","five","six","seven","eight","nine"];
-            const teens = ["ten","eleven","twelve","thirteen","fourteen","fifteen","sixteen","seventeen","eighteen","nineteen"];
-            const tens = ["","","twenty","thirty","forty","fifty","sixty","seventy","eighty","ninety"];
-            
-            function chunk(x) {
-                if(x === 0) return "";
-                if(x < 10) return units[x];
-                if(x < 20) return teens[x-10];
-                if(x < 100) return tens[Math.floor(x/10)] + (x%10 === 0 ? "" : " "+units[x%10]);
-                if(x < 1000) return units[Math.floor(x/100)] + " hundred" + (x%100 === 0 ? "" : " " + chunk(x%100));
-                return "";
-            }
-            
-            if(n === 0) return "zero";
-            const parts = [];
-            for(const [div,word] of [[10**9,"billion"],[10**6,"million"],[10**3,"thousand"]]) {
-                if(n >= div) {
-                    parts.push(chunk(Math.floor(n/div)) + " " + word);
-                    n %= div;
-                }
-            }
-            if(n > 0) parts.push(chunk(n));
-            return parts.join(" ");
-        }
+def malaa_factor(score:int)->float:
+    # inverse: 300→1.45 risk, 900→0.55 risk
+    return float(np.clip(1.45 - (score-300)*(0.90/600), 0.55, 1.45))
 
-        // Formatters
-        function f2(x) {
-            try {
-                return parseFloat(parseFloat(x).toFixed(2));
-            } catch {
-                return parseFloat("NaN");
-            }
-        }
+def ltv_factor(ltv: float)->float:
+    return float(np.clip(0.55 + 0.0075*ltv, 0.80, 1.50))
 
-        function fmt2(x) {
-            try {
-                return f2(parseFloat(x)).toFixed(2);
-            } catch {
-                return "";
-            }
-        }
+def wcs_factor(wc: float, sales: float)->float:
+    if sales<=0: return 1.20
+    ratio = wc / sales
+    return float(np.clip(0.70 + 1.00*min(ratio, 1.2), 0.70, 1.70))
 
-        // Product and industry factors
-        const PRODUCTS_FUND = ["Asset Backed Loan","Term Loan","Export Finance"];
-        const PRODUCTS_UTIL = ["Working Capital","Trade Finance","Supply Chain Finance","Vendor Finance"];
-        
-        const productFactor = {
-            "Asset Backed Loan":1.35, "Term Loan":1.20, "Export Finance":1.10,
-            "Vendor Finance":0.95, "Supply Chain Finance":0.90, "Trade Finance":0.85, "Working Capital":0.95
-        };
-        
-        const industryFactor = {
-            "Construction":1.40, "Real Estate":1.30, "Mining":1.30, "Hospitality":1.25,
-            "Retail":1.15, "Manufacturing":1.10, "Trading":1.05, "Logistics":1.00,
-            "Oil & Gas":0.95, "Healthcare":0.90, "Utilities":0.85, "Agriculture":1.15
-        };
-        
-        const uMedMap = {
-            "Trading":0.65,"Manufacturing":0.55,"Construction":0.40,"Logistics":0.60,"Retail":0.50,
-            "Healthcare":0.45,"Hospitality":0.35,"Oil & Gas":0.50,"Real Estate":0.30,"Utilities":0.55,
-            "Mining":0.45,"Agriculture":0.40
-        };
+def composite_risk(product: str, industry: str, malaa: int, ltv: float, wc: float, sales: float, is_fund: bool)->float:
+    pf = product_factor[product]; inf = industry_factor[industry]; mf = malaa_factor(malaa)
+    rf = ltv_factor(ltv if is_fund else 60.0) if is_fund else wcs_factor(wc, sales)
+    return float(np.clip(pf*inf*mf*rf, 0.4, 3.5))
 
-        // Helper functions
-        function clamp(x, lo, hi) {
-            return Math.max(lo, Math.min(x, hi));
-        }
+def pd_from_risk(r: float, stage: int)->float:
+    # curve: 0.4→0.3%, 1.0→1.0%, 2.0→3.0%, 3.5→6.0%; stage: ×2.5 (S2), ×6 (S3)
+    xs = np.array([0.4,1.0,2.0,3.5]); ys = np.array([0.3,1.0,3.0,6.0])
+    pd = float(np.interp(r, xs, ys))
+    if stage==2: pd*=2.5
+    if stage==3: pd*=6.0
+    return float(np.clip(pd, 0.10, 60.0))
 
-        function malaaFactor(score) {
-            return clamp(1.45 - (score-300)*(0.90/600), 0.55, 1.45);
-        }
+def lgd_from_product_ltv(prod:str, ltv: float, is_fund: bool)->float:
+    base = 32 if prod=="Asset Backed Loan" else 38 if prod=="Term Loan" else 35 if prod=="Export Finance" else 30
+    adj = max(0.0, (0.0 if (ltv is None or (isinstance(ltv,float) and np.isnan(ltv))) else ltv)-50.0)*0.25
+    if not is_fund: adj += 8.0
+    return float(np.clip(base+adj, 25.0, 70.0))
 
-        function ltvFactor(ltv) {
-            return clamp(0.55 + 0.0075*ltv, 0.80, 1.50);
-        }
+def malaa_label(score:int)->str:
+    if score < 500: return "High (poor score)"
+    if score < 650: return "Medium-High"
+    if score < 750: return "Medium"
+    return "Low (good score)"
 
-        function wcsFactor(wc, sales) {
-            if(sales <= 0) return 1.20;
-            const ratio = wc / sales;
-            return clamp(0.70 + 1.00*Math.min(ratio, 1.2), 0.70, 1.70);
-        }
+# floors/add-ons in basis points
+BUCKETS = ["Low","Medium","High"]
+BUCKET_MULT = {"Low":0.90,"Medium":1.00,"High":1.25}
+BUCKET_BAND_BPS = {"Low":60,"Medium":90,"High":140}
+BUCKET_FLOOR_BPS = {"Low":150,"Medium":225,"High":325}
+MALAA_FLOOR_BPS = {"High (poor score)":175,"Medium-High":125,"Medium":75,"Low (good score)":0}
 
-        function compositeRisk(product, industry, malaa, ltv, wc, sales, isFund) {
-            const pf = productFactor[product];
-            const inf = industryFactor[industry];
-            const mf = malaaFactor(malaa);
-            const rf = isFund ? ltvFactor(ltv) : wcsFactor(wc, sales);
-            return clamp(pf*inf*mf*rf, 0.4, 3.5);
-        }
+def industry_floor_addon(ind_fac: float)->int:
+    return 100 if ind_fac>=1.25 else (50 if ind_fac>=1.10 else 0)
 
-        function pdFromRisk(r, stage) {
-            const xs = [0.4,1.0,2.0,3.5];
-            const ys = [0.3,1.0,3.0,6.0];
-            let pd = 0;
-            
-            // Linear interpolation
-            if(r <= xs[0]) pd = ys[0];
-            else if(r >= xs[xs.length-1]) pd = ys[ys.length-1];
-            else {
-                for(let i = 0; i < xs.length-1; i++) {
-                    if(r >= xs[i] && r <= xs[i+1]) {
-                        const t = (r - xs[i]) / (xs[i+1] - xs[i]);
-                        pd = ys[i] + t * (ys[i+1] - ys[i]);
-                        break;
-                    }
-                }
-            }
-            
-            if(stage == 2) pd *= 2.5;
-            if(stage == 3) pd *= 6.0;
-            return clamp(pd, 0.10, 60.0);
-        }
+def product_floor_addon(prod:str)->int:
+    return 125 if prod=="Asset Backed Loan" else (75 if prod in ["Term Loan","Export Finance"] else 0)
 
-        function lgdFromProductLtv(prod, ltv, isFund) {
-            let base = 32;
-            if(prod === "Term Loan") base = 38;
-            else if(prod === "Export Finance") base = 35;
-            else if(!isFund) base = 30;
-            
-            let adj = Math.max(0, (isNaN(ltv) ? 0 : ltv)-50.0)*0.25;
-            if(!isFund) adj += 8.0;
-            return clamp(base+adj, 25.0, 70.0);
-        }
+def base_spread_from_risk(risk: float)->float:
+    # bps curve around risk
+    return 75 + 350*(risk - 1.0)
 
-        function malaaLabel(score) {
-            if(score < 500) return "High (poor score)";
-            if(score < 650) return "Medium-High";
-            if(score < 750) return "Medium";
-            return "Low (good score)";
-        }
+# ---------------- Cashflow blocks ----------------
+def fund_first_year_metrics(P: float, tenor_m: int, rep_rate: float, fees_pct: float, cof_pct: float, prov_pct: float, opex_pct: float)\
+        -> Tuple[float,float,float,float]:
+    i = rep_rate/100.0/12.0
+    if i<=0 or tenor_m<=0 or P<=0: return 0.0,0.0,1.0,0.0
+    EMI = P * i * (1+i)**tenor_m / ((1+i)**tenor_m - 1)
+    months = min(12, tenor_m)
+    bal = P; sum_net_12=0.0; sum_bal_12=0.0
+    for _ in range(months):
+        interest = bal * i
+        fee = P * (fees_pct/100.0/12.0)
+        funding = bal * (cof_pct/100.0/12.0)
+        prov = bal * (prov_pct/100.0/12.0)
+        opex = bal * (opex_pct/100.0/12.0)
+        net = interest + fee - (funding + prov + opex)
+        sum_net_12 += net
+        sum_bal_12 += bal
+        principal = EMI - interest
+        bal = max(bal - principal, 0.0)
+    AEA_12 = max(sum_bal_12/months, 1e-9)
+    NII_annual = sum_net_12
+    NIM_pct = (NII_annual/AEA_12)*100.0
+    return f2(EMI), f2(NII_annual), f2(AEA_12), f2(NIM_pct)
 
-        // Pricing buckets
-        const BUCKETS = ["Low","Medium","High"];
-        const BUCKET_MULT = {"Low":0.90,"Medium":1.00,"High":1.25};
-        const BUCKET_BAND_BPS = {"Low":60,"Medium":90,"High":140};
-        const BUCKET_FLOOR_BPS = {"Low":150,"Medium":225,"High":325};
-        const MALAA_FLOOR_BPS = {"High (poor score)":175,"Medium-High":125,"Medium":75,"Low (good score)":0};
+def fund_breakeven_months(P: float, tenor_m:int, rate_pct: float, fees_pct: float, cof_pct: float, prov_pct: float, opex_pct: float, upfront_cost_pct: float):
+    i = rate_pct/100.0/12.0
+    if i<=0 or tenor_m<=0 or P<=0: return "Breakeven not within the tenor"
+    EMI = P * i * (1+i)**tenor_m / ((1+i)**tenor_m - 1)
+    bal=P; C0 = upfront_cost_pct/100.0 * P; cum=-C0
+    for m in range(1, tenor_m+1):
+        interest = bal*i
+        fee = P * (fees_pct/100.0/12.0)
+        funding = bal * (cof_pct/100.0/12.0)
+        prov = bal * (prov_pct/100.0/12.0)
+        opex = bal * (opex_pct/100.0/12.0)
+        net = interest + fee - (funding + prov + opex)
+        cum += net
+        principal = EMI - interest
+        bal = max(bal - principal, 0.0)
+        if cum>=0: return m
+    return "Breakeven not within the tenor"
 
-        function industryFloorAddon(indFac) {
-            return indFac >= 1.25 ? 100 : (indFac >= 1.10 ? 50 : 0);
-        }
+def util_metrics(limit_or_wc: float, industry:str, rep_rate: float, fees_pct: float, cof_pct: float, prov_pct: float, opex_pct: float, upfront_cost_pct: float):
+    u = u_med_map[industry]
+    EAD = max(limit_or_wc, 0.0) * u
+    margin_pct = rep_rate + fees_pct - (cof_pct + prov_pct + opex_pct)
+    NIM_pct = margin_pct
+    NII_annual = (margin_pct/100.0) * EAD
+    C0 = upfront_cost_pct/100.0 * max(limit_or_wc, 0.0)
+    if margin_pct>0 and EAD>0:
+        m_be = math.ceil(C0 / (NII_annual/12.0))
+        return f2(EAD), f2(NIM_pct), f2(NII_annual), (m_be if m_be>0 else 1), f2(u*100.0)
+    return f2(EAD), f2(NIM_pct), f2(NII_annual), "Breakeven not within the tenor", f2(u*100.0)
 
-        function productFloorAddon(prod) {
-            return prod === "Asset Backed Loan" ? 125 : (["Term Loan","Export Finance"].includes(prod) ? 75 : 0);
-        }
+# ---------------- UI ----------------
+st.set_page_config(page_title="rt 360 risk-adjusted pricing", page_icon="💠", layout="wide")
+st.markdown("""
+<style>
+.big {font-size:28px;font-weight:800}
+.blue {color:#1666d3}
+.green {color:#18a05e}
+.card {background:white;border:4px solid #1666d3;border-radius:14px;padding:14px 18px;box-shadow:0 6px 18px rgba(0,0,0,0.08);}
+.small {color:#6b7280;font-size:12px}
+</style>
+<div class="big"><span class="blue">rt</span> <span class="green">360</span> — Risk-Adjusted Pricing Model for Corporate Lending</div>
+""", unsafe_allow_html=True)
 
-        function baseSpreadFromRisk(risk) {
-            return 75 + 350*(risk - 1.0);
-        }
+with st.sidebar:
+    st.subheader("Market & Bank Assumptions")
+    oibor_pct = st.number_input("OIBOR (Reference Rate, %)", value=4.10, step=0.00, format="%.2f")
+    cof_pct = st.number_input("Cost of Funds (%, annual)", value=5.00, step=0.00, format="%.2f")
+    target_nim_pct = st.number_input("Target Net Interest Margin (%, floor)", value=2.50, step=0.00, format="%.2f")
+    opex_pct = st.number_input("Operating Expense (%, annual)", value=0.40, step=0.00, format="%.2f")
+    fees_default = st.number_input("Default Fees (%, WC/SCF/VF/Export)", value=0.40, step=0.00, format="%.2f")
+    upfront_cost_pct= st.number_input("Upfront Origination Cost (%, one-time)", value=0.50, step=0.00, format="%.2f")
+    st.markdown("---")
 
-        // Cash flow calculations
-        function fundFirstYearMetrics(P, tenorM, repRate, feesPct, cofPct, provPct, opexPct) {
-            const i = repRate/100.0/12.0;
-            if(i <= 0 || tenorM <= 0 || P <= 0) return [0.0,0.0,1.0,0.0];
-            
-            const EMI = P * i * Math.pow(1+i, tenorM) / (Math.pow(1+i, tenorM) - 1);
-            const months = Math.min(12, tenorM);
-            let bal = P, sumNet12 = 0, sumBal12 = 0;
-            
-            for(let m = 0; m < months; m++) {
-                const interest = bal * i;
-                const fee = P * (feesPct/100.0/12.0);
-                const funding = bal * (cofPct/100.0/12.0);
-                const prov = bal * (provPct/100.0/12.0);
-                const opex = bal * (opexPct/100.0/12.0);
-                const net = interest + fee - (funding + prov + opex);
-                sumNet12 += net;
-                sumBal12 += bal;
-                const principal = EMI - interest;
-                bal = Math.max(bal - principal, 0.0);
-            }
-            
-            const AEA12 = Math.max(sumBal12/months, 1e-9);
-            const NIIannual = sumNet12;
-            const NIMpct = (NIIannual/AEA12)*100.0;
-            return [f2(EMI), f2(NIIannual), f2(AEA12), f2(NIMpct)];
-        }
+    st.subheader("Borrower & Product")
+    product = st.selectbox("Product", PRODUCTS_FUND + PRODUCTS_UTIL)
+    industry = st.selectbox("Borrower Industry", list(industry_factor.keys()))
+    malaa_score = int(st.number_input("Mala’a Credit Score (300–900)", value=750, step=0, format="%d"))
+    stage = int(st.number_input("IFRS-9 Stage (1=Performing, 2=Underperforming, 3=Impaired)", value=1, min_value=1, max_value=3, step=0, format="%d"))
+    st.markdown("---")
 
-        function fundBreakevenMonths(P, tenorM, ratePct, feesPct, cofPct, provPct, opexPct, upfrontCostPct) {
-            const i = ratePct/100.0/12.0;
-            if(i <= 0 || tenorM <= 0 || P <= 0) return "Breakeven not within the tenor";
-            
-            const EMI = P * i * Math.pow(1+i, tenorM) / (Math.pow(1+i, tenorM) - 1);
-            let bal = P;
-            let C0 = upfrontCostPct/100.0 * P;
-            let cum = -C0;
-            
-            for(let m = 1; m <= tenorM; m++) {
-                const interest = bal * i;
-                const fee = P * (feesPct/100.0/12.0);
-                const funding = bal * (cofPct/100.0/12.0);
-                const prov = bal * (provPct/100.0/12.0);
-                const opex = bal * (opexPct/100.0/12.0);
-                const net = interest + fee - (funding + prov + opex);
-                cum += net;
-                const principal = EMI - interest;
-                bal = Math.max(bal - principal, 0.0);
-                if(cum >= 0) return m;
-            }
-            
-            return "Breakeven not within the tenor";
-        }
+    st.subheader("Loan Details (Typed Inputs)")
+    tenor_months = int(st.number_input("Tenor (months, 6–360)", value=36, min_value=6, max_value=360, step=0, format="%d"))
+    loan_quantum_omr = st.number_input("Loan Quantum (OMR) — principal or limit", value=100000.00, step=0.00, format="%.2f")
+    st.caption(f"In words: {num_to_words(int(loan_quantum_omr))} Omani Rials")
 
-        function utilMetrics(limitOrWc, industry, repRate, feesPct, cofPct, provPct, opexPct, upfrontCostPct) {
-            const u = uMedMap[industry];
-            const EAD = Math.max(limitOrWc, 0.0) * u;
-            const marginPct = repRate + feesPct - (cofPct + provPct + opexPct);
-            const NIMpct = marginPct;
-            const NIIannual = (marginPct/100.0) * EAD;
-            const C0 = upfrontCostPct/100.0 * Math.max(limitOrWc, 0.0);
-            
-            if(marginPct > 0 && EAD > 0) {
-                const mBe = Math.ceil(C0 / (NIIannual/12.0));
-                return [f2(EAD), f2(NIMpct), f2(NIIannual), (mBe > 0 ? mBe : 1), f2(u*100.0)];
-            }
-            
-            return [f2(EAD), f2(NIMpct), f2(NIIannual), "Breakeven not within the tenor", f2(u*100.0)];
-        }
+    is_fund = product in PRODUCTS_FUND
+    if is_fund:
+        ltv_pct = st.number_input("Loan-to-Value (LTV, %)", value=70.00, step=0.00, format="%.2f")
+        wc_omr, sales_omr = 0.0, 0.0
+        fees_pct = 0.00 # fund-based: no default fees unless Export Finance
+        if product == "Export Finance":
+            fees_pct = fees_default
+    else:
+        ltv_pct = float("nan")
+        wc_omr = loan_quantum_omr # treat entered quantum as limit for utilization products
+        sales_omr = st.number_input("Annual Sales (OMR)", value=600000.00, step=0.00, format="%.2f")
+        st.caption(f"In words: {num_to_words(int(sales_omr))} Omani Rials")
+        fees_pct = fees_default
 
-        // DOM event handlers
-        document.getElementById('product').addEventListener('change', function() {
-            const product = this.value;
-            const isFund = PRODUCTS_FUND.includes(product);
-            
-            if(isFund) {
-                document.getElementById('ltv_container').classList.remove('hidden');
-                document.getElementById('sales_container').classList.add('hidden');
-            } else {
-                document.getElementById('ltv_container').classList.add('hidden');
-                document.getElementById('sales_container').classList.remove('hidden');
-            }
-        });
+    st.markdown("---")
+    run = st.button("Compute Pricing")
 
-        document.getElementById('loan_quantum').addEventListener('input', function() {
-            const value = parseInt(this.value) || 0;
-            document.getElementById('loan_in_words').textContent = `In words: ${numToWords(value)} Omani Rials`;
-        });
+st.markdown('<div class="card">', unsafe_allow_html=True)
+st.subheader("Pricing Buckets (Low / Medium / High)")
+if not run:
+    st.info("Enter inputs in the left pane and click **Compute Pricing**.")
+st.markdown('</div>', unsafe_allow_html=True)
 
-        document.getElementById('sales').addEventListener('input', function() {
-            const value = parseInt(this.value) || 0;
-            document.getElementById('sales_in_words').textContent = `In words: ${numToWords(value)} Omani Rials`;
-        });
+if run:
+    # ------- Composite risk & Provision -------
+    risk_base = composite_risk(product, industry, malaa_score, ltv_pct if is_fund else 60.0, wc_omr, sales_omr, is_fund)
+    pd_pct_base = pd_from_risk(risk_base, stage)
+    lgd_pct_base = lgd_from_product_ltv(product, ltv_pct, is_fund)
+    provision_pct_base = f2(pd_pct_base * (lgd_pct_base/100.0)) # annual % of avg EAD
 
-        // Main computation
-        document.getElementById('compute').addEventListener('click', function() {
-            // Get all inputs
-            const oiborPct = parseFloat(document.getElementById('oibor').value) || 0;
-            const cofPct = parseFloat(document.getElementById('cof').value) || 0;
-            const targetNimPct = parseFloat(document.getElementById('target_nim').value) || 0;
-            const opexPct = parseFloat(document.getElementById('opex').value) || 0;
-            const feesDefault = parseFloat(document.getElementById('fees_default').value) || 0;
-            const upfrontCostPct = parseFloat(document.getElementById('upfront_cost').value) || 0;
-            
-            const product = document.getElementById('product').value;
-            const industry = document.getElementById('industry').value;
-            const malaaScore = parseInt(document.getElementById('malaa').value) || 0;
-            const stage = parseInt(document.getElementById('stage').value) || 1;
-            const tenorMonths = parseInt(document.getElementById('tenor').value) || 0;
-            const loanQuantumOmr = parseFloat(document.getElementById('loan_quantum').value) || 0;
-            
-            const isFund = PRODUCTS_FUND.includes(product);
-            let ltvPct, wcOmr, salesOmr, feesPct;
-            
-            if(isFund) {
-                ltvPct = parseFloat(document.getElementById('ltv').value) || 0;
-                wcOmr = 0.0;
-                salesOmr = 0.0;
-                feesPct = product === "Export Finance" ? feesDefault : 0.00;
-            } else {
-                ltvPct = NaN;
-                wcOmr = loanQuantumOmr;
-                salesOmr = parseFloat(document.getElementById('sales').value) || 0;
-                feesPct = feesDefault;
-            }
-            
-            // Calculate composite risk
-            const riskBase = compositeRisk(product, industry, malaaScore, isFund ? ltvPct : 60.0, wcOmr, salesOmr, isFund);
-            const pdPctBase = pdFromRisk(riskBase, stage);
-            const lgdPctBase = lgdFromProductLtv(product, ltvPct, isFund);
-            const provisionPctBase = f2(pdPctBase * (lgdPctBase/100.0));
-            
-            // Pricing buckets
-            const malaaLbl = malaaLabel(malaaScore);
-            const indAdd = industryFloorAddon(industryFactor[industry]);
-            const prodAdd = productFloorAddon(product);
-            const malaaAdd = MALAA_FLOOR_BPS[malaaLbl];
-            const minCoreSpreadBps = 125;
-            
-            const rows = [];
-            
-            for(const bucket of BUCKETS) {
-                // Scale risk for bucket
-                const riskB = clamp(riskBase * BUCKET_MULT[bucket], 0.4, 3.5);
-                
-                // PD/LGD per bucket
-                const pdPct = pdFromRisk(riskB, stage);
-                const lgdPct = lgdFromProductLtv(product, isFund ? ltvPct : 60.0, isFund);
-                const provPct = f2(pdPct * (lgdPct/100.0));
-                
-                // Spread calculation
-                let rawBps = baseSpreadFromRisk(riskB);
-                const floors = BUCKET_FLOOR_BPS[bucket] + malaaAdd + indAdd + prodAdd;
-                let baseBps = Math.max(Math.round(rawBps), floors, minCoreSpreadBps);
-                const bandBps = BUCKET_BAND_BPS[bucket];
-                
-                // Initial band → convert to rate band
-                let spreadMinBps = Math.max(baseBps - bandBps, floors, minCoreSpreadBps);
-                let spreadMaxBps = Math.max(baseBps + bandBps, spreadMinBps + 10);
-                
-                let rateMin = clamp(oiborPct + spreadMinBps/100.0, 5.00, 12.00);
-                let rateMax = clamp(oiborPct + spreadMaxBps/100.0, 5.00, 12.00);
-                let repRate = (rateMin + rateMax)/2.0;
-                
-                // Fund floor first (6.00)
-                if(isFund) {
-                    rateMin = Math.max(rateMin, 6.00);
-                    rateMax = Math.max(rateMax, 6.00);
-                    repRate = Math.max(repRate, 6.00);
-                }
-                
-                // Strict Target NIM floor
-                const requiredRate = f2(cofPct + provPct + opexPct - feesPct + targetNimPct);
-                repRate = Math.max(repRate, requiredRate);
-                
-                // Rebuild symmetric mini-band around center; clamp
-                const halfBand = bandBps/200.0;
-                rateMin = clamp(repRate - halfBand, 5.00, 12.00);
-                rateMax = clamp(repRate + halfBand, 5.00, 12.00);
-                if(rateMax - rateMin < 0.10) {
-                    rateMax = clamp(rateMin + 0.10, 5.00, 12.00);
-                }
-                
-                // Floats over OIBOR (bps)
-                const flMinBps = Math.max(Math.round((rateMin - oiborPct)*100), minCoreSpreadBps);
-                const flMaxBps = Math.max(Math.round((rateMax - oiborPct)*100), flMinBps + 10);
-                
-                // Cash metrics
-                if(isFund) {
-                    const [EMI, NIIannual, AEA12, NIMpct] = fundFirstYearMetrics(
-                        loanQuantumOmr, tenorMonths, repRate, feesPct, cofPct, provPct, opexPct
-                    );
-                    
-                    const beMin = fundBreakevenMonths(loanQuantumOmr, tenorMonths, rateMin, feesPct, cofPct, provPct, opexPct, upfrontCostPct);
-                    const beRep = fundBreakevenMonths(loanQuantumOmr, tenorMonths, repRate, feesPct, cofPct, provPct, opexPct, upfrontCostPct);
-                    const beMax = fundBreakevenMonths(loanQuantumOmr, tenorMonths, rateMax, feesPct, cofPct, provPct, opexPct, upfrontCostPct);
-                    
-                    // Decomposed annual components
-                    const annualInterest = f2((repRate/100.0)*AEA12);
-                    const annualFee = f2((feesPct/100.0)*loanQuantumOmr);
-                    const annualFunding = f2((cofPct/100.0)*AEA12);
-                    const annualProv = f2((provPct/100.0)*AEA12);
-                    const annualOpex = f2((opexPct/100.0)*AEA12);
-                    const nii = f2(annualInterest + annualFee - (annualFunding + annualProv + annualOpex));
-                    
-                    rows.push({
-                        bucket,
-                        flMinBps,
-                        flMaxBps,
-                        rateMin: f2(rateMin),
-                        repRate: f2(repRate),
-                        rateMax: f2(rateMax),
-                        EMI: f2(EMI),
-                        annualInterest,
-                        annualFee,
-                        annualFunding,
-                        annualProv,
-                        annualOpex,
-                        nii,
-                        NIMpct: f2(NIMpct),
-                        beMin,
-                        beRep,
-                        beMax,
-                        malaaLbl,
-                        industryFactor: f2(industryFactor[industry]),
-                        productFactor: f2(productFactor[product]),
-                        riskBase: f2(riskBase),
-                        provPct: f2(provPct)
-                    });
-                } else {
-                    // Utilization loans
-                    const [EAD, NIMpct, NIIannual, beRep, uPct] = utilMetrics(
-                        loanQuantumOmr, industry, repRate, feesPct, cofPct, provPct, opexPct, upfrontCostPct
-                    );
-                    
-                    function utilBe(rate) {
-                        const margin = rate + feesPct - (cofPct + provPct + opexPct);
-                        if(margin <= 0 || loanQuantumOmr <= 0) return "Breakeven not within the tenor";
-                        const m = Math.ceil((upfrontCostPct/100.0 * loanQuantumOmr) / ((margin/100.0)*(loanQuantumOmr*uMedMap[industry])/12.0));
-                        return m <= tenorMonths ? m : "Breakeven not within the tenor";
-                    }
-                    
-                    const beMin = utilBe(rateMin);
-                    const beMax = utilBe(rateMax);
-                    
-                    const annualInterest = f2((repRate/100.0) * EAD);
-                    const annualFee = f2((feesPct/100.0) * loanQuantumOmr);
-                    const annualFunding = f2((cofPct/100.0) * EAD);
-                    const annualProv = f2((provPct/100.0) * EAD);
-                    const annualOpex = f2((opexPct/100.0) * EAD);
-                    const nii = f2(annualInterest + annualFee - (annualFunding + annualProv + annualOpex));
-                    
-                    rows.push({
-                        bucket,
-                        flMinBps,
-                        flMaxBps,
-                        rateMin: f2(rateMin),
-                        repRate: f2(repRate),
-                        rateMax: f2(rateMax),
-                        EMI: "-",
-                        annualInterest,
-                        annualFee,
-                        annualFunding,
-                        annualProv,
-                        annualOpex,
-                        nii,
-                        NIMpct: f2(NIMpct),
-                        beMin,
-                        beRep,
-                        beMax,
-                        malaaLbl,
-                        industryFactor: f2(industryFactor[industry]),
-                        productFactor: f2(productFactor[product]),
-                        riskBase: f2(riskBase),
-                        provPct: f2(provPct),
-                        optimalUtil: f2(uPct)
-                    });
-                }
-            }
-            
-            // Render results
-            let html = `<div class="overflow-x-auto">
-                <table class="w-full border-collapse">
-                    <thead>
-                        <tr class="bg-gray-100">
-                            <th class="p-3 text-left border-b">Pricing Bucket</th>
-                            <th class="p-3 text-left border-b">Float (Min) over OIBOR (bps)</th>
-                            <th class="p-3 text-left border-b">Float (Max) over OIBOR (bps)</th>
-                            <th class="p-3 text-left border-b">Min Rate (%)</th>
-                            <th class="p-3 text-left border-b">Recommended Rate (%)</th>
-                            <th class="p-3 text-left border-b">Max Rate (%)</th>
-                            <th class="p-3 text-left border-b">EMI (OMR)</th>
-                            <th class="p-3 text-left border-b">NII (OMR)</th>
-                            <th class="p-3 text-left border-b">NIM (%)</th>
-                            <th class="p-3 text-left border-b">Breakeven (months)</th>
-                        </tr>
-                    </thead>
-                    <tbody>`;
-            
-            for(const row of rows) {
-                html += `
-                    <tr class="border-b hover:bg-gray-50">
-                        <td class="p-3">${row.bucket}</td>
-                        <td class="p-3">${row.flMinBps}</td>
-                        <td class="p-3">${row.flMaxBps}</td>
-                        <td class="p-3">${row.rateMin}</td>
-                        <td class="p-3">${row.repRate}</td>
-                        <td class="p-3">${row.rateMax}</td>
-                        <td class="p-3">${row.EMI}</td>
-                        <td class="p-3">${row.nii}</td>
-                        <td class="p-3">${row.NIMpct}</td>
-                        <td class="p-3">${row.beRep}</td>
-                    </tr>`;
-            }
-            
-            html += `</tbody></table></div>`;
-            
-            // Risk details
-            html += `<div class="mt-8 grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div class="bg-gray-50 p-4 rounded">
-                    <h3 class="font-bold mb-2">Risk Details</h3>
-                    <p><strong>Borrower Risk:</strong> ${rows[0].malaaLbl}</p>
-                    <p><strong>Industry Factor:</strong> ${rows[0].industryFactor}x</p>
-                    <p><strong>Product Factor:</strong> ${rows[0].productFactor}x</p>
-                    <p><strong>Composite Risk:</strong> ${rows[0].riskBase}x</p>
-                    <p><strong>Provision:</strong> ${rows[0].provPct}% annual</p>
-                </div>`;
-            
-            if(!isFund) {
-                html += `<div class="bg-gray-50 p-4 rounded">
-                    <h3 class="font-bold mb-2">Utilization Metrics</h3>
-                    <p><strong>Optimal Utilization:</strong> ${rows[0].optimalUtil}%</p>
-                    <p class="text-sm mt-2 text-gray-600">Based on industry median utilization for ${industry}</p>
-                </div>`;
-            }
-            
-            html += `</div>`;
-            
-            document.getElementById('results').innerHTML = html;
-        });
+    # ------- Buckets: spread construction -------
+    rows: List[Dict[str,Any]] = []
+    malaa_lbl = malaa_label(malaa_score)
+    ind_add = industry_floor_addon(industry_factor[industry])
+    prod_add = product_floor_addon(product)
+    malaa_add = MALAA_FLOOR_BPS[malaa_lbl]
+    min_core_spread_bps = 125
 
-        // Initialize product type visibility
-        document.getElementById('product').dispatchEvent(new Event('change'));
-        
-        // Initialize number to words
-        document.getElementById('loan_quantum').dispatchEvent(new Event('input'));
-        
-        if(document.getElementById('sales').value) {
-            document.getElementById('sales').dispatchEvent(new Event('input'));
-        }
-    </script>
-</body>
-</html>
+    for bucket in BUCKETS:
+        # scale risk for bucket
+        risk_b = float(np.clip(risk_base * BUCKET_MULT[bucket], 0.4, 3.5))
+        # PD/LGD per bucket (stage-aware)
+        pd_pct = pd_from_risk(risk_b, stage)
+        lgd_pct = lgd_from_product_ltv(product, ltv_pct if is_fund else 60.0, is_fund)
+        prov_pct = f2(pd_pct * (lgd_pct/100.0)) # shown in brackets later
+
+        raw_bps = base_spread_from_risk(risk_b)
+        floors = BUCKET_FLOOR_BPS[bucket] + malaa_add + ind_add + prod_add
+        base_bps = max(int(round(raw_bps)), floors, min_core_spread_bps)
+        band_bps = BUCKET_BAND_BPS[bucket]
+
+        # Initial band → convert to rate band
+        spread_min_bps = max(base_bps - band_bps, floors, min_core_spread_bps)
+        spread_max_bps = max(base_bps + band_bps, spread_min_bps + 10)
+
+        rate_min = clamp(oibor_pct + spread_min_bps/100.0, 5.00, 12.00)
+        rate_max = clamp(oibor_pct + spread_max_bps/100.0, 5.00, 12.00)
+        rep_rate = (rate_min + rate_max)/2.0
+
+        # Fund floor first (6.00)
+        if is_fund:
+            rate_min = max(rate_min, 6.00)
+            rate_max = max(rate_max, 6.00)
+            rep_rate = max(rep_rate, 6.00)
+
+        # Strict Target NIM floor:
+        # required rate = CoF + Provision + Opex - Fees + Target NIM
+        required_rate = f2(cof_pct + prov_pct + opex_pct - fees_pct + target_nim_pct)
+        rep_rate = max(rep_rate, required_rate)
+
+        # Rebuild symmetric mini-band around center; clamp
+        half_band = band_bps/200.0
+        rate_min = clamp(rep_rate - half_band, 5.00, 12.00)
+        rate_max = clamp(rep_rate + half_band, 5.00, 12.00)
+        if rate_max - rate_min < 0.10:
+            rate_max = clamp(rate_min + 0.10, 5.00, 12.00)
+
+        # Floats over OIBOR (bps)
+        fl_min_bps = max(int(round((rate_min - oibor_pct)*100)), min_core_spread_bps)
+        fl_max_bps = max(int(round((rate_max - oibor_pct)*100)), fl_min_bps + 10)
+
+        # ------- Cash metrics -------
+        if is_fund:
+            EMI, NII_annual, AEA_12, NIM_pct = fund_first_year_metrics(
+                loan_quantum_omr, tenor_months, rep_rate, fees_pct, cof_pct, prov_pct, opex_pct
+            )
+            be_min = fund_breakeven_months(loan_quantum_omr, tenor_months, rate_min, fees_pct, cof_pct, prov_pct, opex_pct, upfront_cost_pct)
+            be_rep = fund_breakeven_months(loan_quantum_omr, tenor_months, rep_rate, fees_pct, cof_pct, prov_pct, opex_pct, upfront_cost_pct)
+            be_max = fund_breakeven_months(loan_quantum_omr, tenor_months, rate_max, fees_pct, cof_pct, prov_pct, opex_pct, upfront_cost_pct)
+
+            # Decomposed annual components (approx using AEA_12)
+            annual_interest = f2((rep_rate/100.0)*AEA_12)
+            annual_fee = f2((fees_pct/100.0)*loan_quantum_omr)
+            annual_funding = f2((cof_pct/100.0)*AEA_12)
+            annual_prov = f2((prov_pct/100.0)*AEA_12)
+            annual_opex = f2((opex_pct/100.0)*AEA_12)
+            nii = f2(annual_interest + annual_fee - (annual_funding + annual_prov + annual_opex))
+
+            rows.append({
+                "Pricing Bucket": bucket,
+                "Float (Min) over OIBOR (basis points)": fl_min_bps,
+                "Float (Max) over OIBOR (basis points)": fl_max_bps,
+                "Interest Rate — Min (%)": f2(rate_min),
+                "Interest Rate — Representative (%)": f2(rep_rate),
+                "Interest Rate — Max (%)": f2(rate_max),
+                "Equivalent Monthly Installment (OMR)": f2(EMI),
+                "Annual Interest Income (OMR)": annual_interest,
+                "Annual Fee Income (OMR)": annual_fee,
+                "Annual Funding Cost (OMR)": annual_funding,
+                "Annual Provision (OMR)": annual_prov,
+                "Annual Operating Expense (OMR)": annual_opex,
+                "Net Interest Income (OMR)": nii,
+                "Net Interest Margin (%)": f2(NIM_pct),
+                "Breakeven — Min Rate (months)": be_min,
+                "Breakeven — Rep Rate (months)": be_rep,
+                "Breakeven — Max Rate (months)": be_max,
+                # Expanded labels & Provision% in brackets on risk lines:
+                "Borrower Risk (by Mala’a)": f"{malaa_lbl}",
+                "Industry Risk Factor (×)": f2(industry_factor[industry]),
+                "Product Risk Factor (×)": f2(product_factor[product]),
+                "Composite Risk Score (×)": f2(risk_base),
+                "Provision % (PD × LGD, annual)": f2(prov_pct)
+            })
+        else:
+            # Utilization loans
+            EAD, NIM_pct, NII_annual, be_rep, u_pct = util_metrics(
+                loan_quantum_omr, industry, rep_rate, fees_pct, cof_pct, prov_pct, opex_pct, upfront_cost_pct
+            )
+            # recompute BE for min/max via margin
+            def util_be(rate: float):
+                margin = rate + fees_pct - (cof_pct + prov_pct + opex_pct)
+                if margin<=0 or loan_quantum_omr<=0: return "Breakeven not within the tenor"
+                m = math.ceil((upfront_cost_pct/100.0 * loan_quantum_omr) / ((margin/100.0)*(loan_quantum_omr*u_med_map[industry])/12.0))
+                return m if m<=tenor_months else "Breakeven not within the tenor"
+            be_min = util_be(rate_min); be_max = util_be(rate_max)
+
+            annual_interest = f2((rep_rate/100.0) * EAD)
+            annual_fee = f2((fees_pct/100.0) * loan_quantum_omr)
+            annual_funding = f2((cof_pct/100.0) * EAD)
+            annual_prov = f2((prov_pct/100.0) * EAD)
+            annual_opex = f2((opex_pct/100.0) * EAD)
+            nii = f2(annual_interest + annual_fee - (annual_funding + annual_prov + annual_opex))
+
+            rows.append({
+                "Pricing Bucket": bucket,
+                "Float (Min) over OIBOR (basis points)": fl_min_bps,
+                "Float (Max) over OIBOR (basis points)": fl_max_bps,
+                "Interest Rate — Min (%)": f2(rate_min),
+                "Interest Rate — Representative (%)": f2(rep_rate),
+                "Interest Rate — Max (%)": f2(rate_max),
+                "Equivalent Monthly Installment (OMR)": "-",
+                "Annual Interest Income (OMR)": annual_interest,
+                "Annual Fee Income (OMR)": annual_fee,
+                "Annual Funding Cost (OMR)": annual_funding,
+                "Annual Provision (OMR)": annual_prov,
+                "Annual Operating Expense (OMR)": annual_opex,
+                "Net Interest Income (OMR)": nii,
+                "Net Interest Margin (%)": f2(NIM_pct),
+                "Breakeven — Min Rate (months)": be_min,
+                "Breakeven — Rep Rate (months)": be_rep,
+                "Breakeven — Max Rate (months)": be_max,
+                "Borrower Risk (by Mala’a)": f"{malaa_lbl}",
+                "Industry Risk Factor (×)": f2(industry_factor[industry]),
+                "Product Risk Factor (×)": f2(product_factor[product]),
+                "Composite Risk Score (×)": f2(risk_base),
+                "Provision % (PD × LGD, annual)": f2(prov_pct),
+                "Optimal Utilization (%)": f2(u_pct)
+            })
+
+    out = pd.DataFrame(rows)
+    # ensure 2-decimals for floats
+    for col in out.columns:
+        if out[col].dtype.kind in "f":
+            out[col] = out[col].apply(f2)
+
+    st.dataframe(out, use_container_width=True)
+
+# ---------------- Notes / legend ----------------
+with st.expander("Legend & Formulas"):
+    st.markdown("""
+- **Float over OIBOR (bps)**: basis points of spread over the reference rate (OIBOR).
+- **Equivalent Monthly Installment (EMI)**: monthly payment for fund-based loans at the representative rate.
+- **Net Interest Income (NII)**: Interest + Fees − (Funding Cost + Provision + Operating Expense), annualized.
+- **Net Interest Margin (NIM)**: NII ÷ Average Earning Assets (first 12 months).
+- **Provision % (PD × LGD, annual)**: Probability of Default × Loss Given Default, as a % of average exposure.
+- **Buckets**: Low / Medium / High apply risk multipliers and wider / narrower bands to spreads.
+- **Floors & Caps**: Rate ≥ 5.00%; **fund-based floor = 6.00%**; **cap = 12.00%**.
+- **Target NIM** is enforced as a floor:  
+  `Required Rate = Cost of Funds + Provision + Operating Expense − Fees + Target NIM`.
+- **Utilization loans** (WC/Trade/SCF/VF): income volume uses industry median utilization for 
