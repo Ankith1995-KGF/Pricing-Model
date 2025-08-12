@@ -723,7 +723,6 @@ def calculate_and_display_single_loan(loan_params: Dict, market_params: Dict):
                 }),
                 height=400
             )
-
 def render_assumptions_tab():
     """Render the model assumptions tab"""
     st.header("Model Assumptions")
@@ -773,4 +772,14 @@ def render_assumptions_tab():
            - Clipped to 0.4-3.5 range
         
         2. **PD Calculation:** Piecewise interpolation
-           - 0.4 → 0.3%, 1.0 → 1.0%,
+           - 0.4 → 0.3%, 1.0 → 1.0%, 2.0 → 3.0%, 3.5 → 6.0%
+           - Stage 2 (×2.5), Stage 3 (×6.0)
+        
+        3. **LGD Calculation:**
+           - Product base (ABL=32, Term=38, Export=35, Others=30)
+           - LTV adjustment: +0.25% per LTV% >50%
+        """)
+
+    with st.expander("NIM Calculation"):
+        st.markdown(""")
+        
