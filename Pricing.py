@@ -491,9 +491,52 @@ def main():
         if loan_book_df is not None:
             st.write("Loan book uploaded. Batch processing logic here...")
 
+   # -------------------------------
+# MAIN APP ENTRYPOINT
+# -------------------------------
+def main():
+    render_header()
+
+    # Create tabs for navigation
+    tab1, tab2, tab3 = st.tabs(["Single Loan Pricing", "Loan Book", "Assumptions"])
+
+    with tab1:
+        market_params = render_market_parameters()
+        loan_params = render_loan_parameters()
+        if st.button("Calculate Pricing", type="primary"):
+            calculate_and_display_single_loan(loan_params, market_params)
+
+    with tab2:
+        loan_book_df = render_loan_book_upload()
+        if loan_book_df is not None:
+            st.write("Loan book uploaded. Batch processing logic goes here...")
+            # You can add batch processing and results display here
+
+    # -------------------------------
+# MAIN APP ENTRYPOINT
+# -------------------------------
+def main():
+    render_header()
+
+    # Create tabs for navigation
+    tab1, tab2, tab3 = st.tabs(["Single Loan Pricing", "Loan Book", "Assumptions"])
+
+    with tab1:
+        market_params = render_market_parameters()
+        loan_params = render_loan_parameters()
+        if st.button("Calculate Pricing", type="primary"):
+            calculate_and_display_single_loan(loan_params, market_params)
+
+    with tab2:
+        loan_book_df = render_loan_book_upload()
+        if loan_book_df is not None:
+            st.write("Loan book uploaded. Batch processing logic goes here...")
+            # You can add batch processing and results display here
+
     with tab3:
         render_assumptions_tab()
 
 
+# Standard Python entry point
 if __name__ == "__main__":
     main()
