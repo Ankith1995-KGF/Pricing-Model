@@ -225,4 +225,4 @@ def calculate_pricing(
         "Hospitality": 1.25, "Retail": 1.15, "Manufacturing": 1.10,
         "Trading": 1.05, "Logistics": 1.00, "Oil & Gas": 0.95,
         "Healthcare": 0.90, "Utilities": 0.85, "Agriculture": 1.15
-    }.get(
+    }.get()
