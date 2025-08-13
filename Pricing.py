@@ -181,6 +181,7 @@ def util_metrics(limit_or_wc: float, u: float, rep_rate: float, fees_pct: float,
 # ---------- UI ----------
 st.set_page_config(page_title="rt 360 risk-adjusted pricing", page_icon="💠", layout="wide")
 
+# Extra colourful CSS
 st.markdown("""
 <style>
 .big {font-size:28px;font-weight:800}
@@ -188,6 +189,13 @@ st.markdown("""
 .green {color:#18a05e}
 .card {background:white;border:4px solid #1666d3;border-radius:14px;padding:14px 18px;box-shadow:0 6px 18px rgba(0,0,0,0.08);}
 .small {color:#6b7280;font-size:12px}
+.dataframe td, .dataframe th {border: 1px solid #ddd; padding: 8px;}
+tr:nth-child(even) {background-color: #f3f9ff;}
+tr:hover {background-color: #eaf3ff;}
+th {background-color:#1666d3;color:white;}
+.bucket-low {background-color: #d4edda !important;}
+.bucket-medium {background-color: #fff3cd !important;}
+.bucket-high {background-color: #f8d7da !important;}
 </style>
 <div class="big"><span class="blue">rt</span> <span class="green">360</span> — Risk-Adjusted Pricing Model for Corporate Lending</div>
 """, unsafe_allow_html=True)
@@ -227,7 +235,36 @@ with st.sidebar:
         utilization_input = st.number_input("Current Utilization (%)", value=60.00, min_value=0.00, max_value=100.00, step=0.00, format="%.2f")
         fees_pct = fees_default
     st.markdown("---")
+    
+    # New: Loan book upload
+    st.subheader("Upload Loan Book Data")
+    uploaded_file = st.file_uploader("Upload Loan Book (CSV/Excel)", type=["csv", "xlsx"])
+    loan_book_df = None
+    if uploaded_file is not None:
+        if uploaded_file.name.endswith(".csv"):
+            loan_book_df = pd.read_csv(uploaded_file)
+        else:
+            loan_book_df = pd.read_excel(uploaded_file)
+        st.success(f"Loaded {loan_book_df.shape[0]} records from loan book.")
+    
     run = st.button("Compute Pricing")
+
+# Historic insights adjustment
+historic_spread_adj = 0
+if uploaded_file is not None and loan_book_df is not None:
+    required_cols = ["Product", "Industry", "Stage", "Spread_bps"]
+    if all(col in loan_book_df.columns for col in required_cols):
+        similar_loans = loan_book_df[
+            (loan_book_df["Product"] == product) &
+            (loan_book_df["Industry"] == industry) &
+            (loan_book_df["Stage"] == stage)
+        ]
+        if not similar_loans.empty:
+            avg_spread = similar_loans["Spread_bps"].mean()
+            st.info(f"Average spread for similar loans: {avg_spread:.0f} bps")
+            historic_spread_adj = (avg_spread - 100) * 0.1
+    else:
+        st.warning("Loan book missing required columns for historic comparison.")
 
 # ---------- Main run ----------
 if run:
@@ -250,7 +287,9 @@ if run:
         prov_pct= f2(pd_pct * (lgd_pct/100.0))
         raw_bps = base_spread_from_risk(risk_b)
         floors = BUCKET_FLOOR_BPS[bucket] + malaa_add + ind_add + prod_add
+        
         center_bps = max(int(round(raw_bps)), floors, min_core_spread_bps)
+        center_bps += historic_spread_adj  # <- add historic adjustment
 
         util_disc_bps = 0
         if product in PRODUCTS_UTIL:
@@ -317,7 +356,6 @@ if run:
                 "Provision %": prov_pct
             })
 
-    # Final display
     df_out = pd.DataFrame(rows)
     st.markdown("### 📊 Pricing Results")
     st.dataframe(df_out, use_container_width=True)
