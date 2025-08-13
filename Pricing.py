@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-# ---------- Global formatting (2 decimals) ----------
+# ---------- Global formatting ----------
 pd.options.display.float_format = lambda x: f"{x:.2f}"
 
 def f2(x: float) -> float:
@@ -19,7 +19,7 @@ def fmt2(x) -> str:
     except Exception:
         return ""
 
-# ---------- Tiny number-to-words ----------
+# ---------- Number to words ----------
 def num_to_words(n: int) -> str:
     units = ["","one","two","three","four","five","six","seven","eight","nine"]
     teens = ["ten","eleven","twelve","thirteen","fourteen","fifteen","sixteen","seventeen","eighteen","nineteen"]
@@ -101,7 +101,7 @@ def malaa_label(score:int)->str:
     if score < 750: return "Medium"
     return "Low (good score)"
 
-# ---------- Bucket mechanics ----------
+# ---------- Buckets ----------
 BUCKETS = ["Low","Medium","High"]
 BUCKET_MULT = {"Low":0.90,"Medium":1.00,"High":1.25}
 BUCKET_BAND_BPS = {"Low":60,"Medium":90,"High":140}
@@ -123,12 +123,6 @@ def utilization_discount_bps(u: float)->int:
     if u >= 0.50: return 0
     if u >= 0.30: return +15
     return +40
-
-def concentration_addon_bps(share: float)->int:
-    if share >= 0.10: return 50
-    if share >= 0.05: return 25
-    if share >= 0.02: return 10
-    return 0
 
 # ---------- Cashflow blocks ----------
 def fund_first_year_metrics(P: float, tenor_m: int, rep_rate: float, fees_pct: float, cof_pct: float, prov_pct: float, opex_pct: float) -> Tuple[float,float,float,float]:
@@ -178,100 +172,79 @@ def util_metrics(limit_or_wc: float, u: float, rep_rate: float, fees_pct: float,
     NII_annual = (margin_pct/100.0) * EAD
     return f2(EAD), f2(NIM_pct), f2(NII_annual)
 
-# ---------- UI ----------
+# ---------- UI Styling ----------
 st.set_page_config(page_title="rt 360 risk-adjusted pricing", page_icon="💠", layout="wide")
-
-# Extra colourful CSS
 st.markdown("""
 <style>
 .big {font-size:28px;font-weight:800}
 .blue {color:#1666d3}
 .green {color:#18a05e}
-.card {background:white;border:4px solid #1666d3;border-radius:14px;padding:14px 18px;box-shadow:0 6px 18px rgba(0,0,0,0.08);}
-.small {color:#6b7280;font-size:12px}
-.dataframe td, .dataframe th {border: 1px solid #ddd; padding: 8px;}
+.dataframe td, .dataframe th {border:1px solid #ddd; padding:4px;}
 tr:nth-child(even) {background-color: #f3f9ff;}
 tr:hover {background-color: #eaf3ff;}
 th {background-color:#1666d3;color:white;}
-.bucket-low {background-color: #d4edda !important;}
-.bucket-medium {background-color: #fff3cd !important;}
-.bucket-high {background-color: #f8d7da !important;}
 </style>
-<div class="big"><span class="blue">rt</span> <span class="green">360</span> — Risk-Adjusted Pricing Model for Corporate Lending</div>
+<div class="big"><span class="blue">rt</span> <span class="green">360</span> — Risk-Adjusted Pricing Model</div>
 """, unsafe_allow_html=True)
 
+# ---------- Sidebar Inputs ----------
 with st.sidebar:
     st.subheader("Market & Bank Assumptions")
-    oibor_pct = st.number_input("OIBOR (%)", value=4.10, step=0.00, format="%.2f")
-    cof_pct = st.number_input("Cost of Funds (%)", value=5.00, step=0.00, format="%.2f")
-    target_nim_pct = st.number_input("Target Net Interest Margin (%)", value=2.50, step=0.00, format="%.2f")
-    opex_pct = st.number_input("Operating Expense (%)", value=0.40, step=0.00, format="%.2f")
-    fees_default = st.number_input("Default Fees (%)", value=0.40, step=0.00, format="%.2f")
-    upfront_cost_pct= st.number_input("Upfront Origination Cost (%)", value=0.50, step=0.00, format="%.2f")
-    st.markdown("---")
+    oibor_pct = st.number_input("OIBOR (%)", value=4.10, step=0.00)
+    cof_pct = st.number_input("Cost of Funds (%)", value=5.00, step=0.00)
+    target_nim_pct = st.number_input("Target NIM (%)", value=2.50, step=0.00)
+    opex_pct = st.number_input("Operating Expense (%)", value=0.40, step=0.00)
+    fees_default = st.number_input("Default Fees (%)", value=0.40, step=0.00)
+    upfront_cost_pct= st.number_input("Upfront Origination Cost (%)", value=0.50, step=0.00)
+    st.divider()
     st.subheader("Borrower & Product")
     product = st.selectbox("Product", PRODUCTS_FUND + PRODUCTS_UTIL)
     industry = st.selectbox("Industry", list(industry_factor.keys()))
-    malaa_score = int(st.number_input("Mala’a Credit Score", value=750, step=0, format="%d"))
-    stage = int(st.number_input("IFRS-9 Stage", value=1, min_value=1, max_value=3, step=0, format="%d"))
-    st.markdown("---")
+    malaa_score = int(st.number_input("Mala’a Credit Score", value=750, step=0))
+    stage = int(st.number_input("IFRS-9 Stage", value=1, min_value=1, max_value=3, step=0))
+    st.divider()
     st.subheader("Loan Details")
-    tenor_months = int(st.number_input("Tenor (months)", value=36, min_value=6, max_value=360, step=0, format="%d"))
-    loan_quantum_omr = st.number_input("Loan Quantum (OMR)", value=100000.00, step=0.00, format="%.2f")
-    st.caption(f"In words: {num_to_words(int(loan_quantum_omr))} Omani Rials")
+    tenor_months = int(st.number_input("Tenor (months)", value=36, min_value=6, max_value=360, step=0))
+    loan_quantum_omr = st.number_input("Loan Quantum (OMR)", value=100000.00, step=0.00)
     is_fund = product in PRODUCTS_FUND
     if is_fund:
-        ltv_pct = st.number_input("Loan-to-Value (%)", value=70.00, step=0.00, format="%.2f")
-        limit_wc = 0.0
-        sales_omr = 0.0
+        ltv_pct = st.number_input("Loan-to-Value (%)", value=70.00)
+        limit_wc = 0.0; sales_omr = 0.0
         fees_pct = fees_default if product=="Export Finance" else 0.00
         utilization_input = None
     else:
         ltv_pct = float("nan")
-        limit_wc = st.number_input("Working Capital / Limit (OMR)", value=80000.00, step=0.00, format="%.2f")
-        st.caption(f"In words: {num_to_words(int(limit_wc))} Omani Rials")
-        sales_omr = st.number_input("Annual Sales (OMR)", value=600000.00, step=0.00, format="%.2f")
-        st.caption(f"In words: {num_to_words(int(sales_omr))} Omani Rials")
-        utilization_input = st.number_input("Current Utilization (%)", value=60.00, min_value=0.00, max_value=100.00, step=0.00, format="%.2f")
+        limit_wc = st.number_input("Working Capital / Limit (OMR)", value=80000.00)
+        sales_omr = st.number_input("Annual Sales (OMR)", value=600000.00)
+        utilization_input = st.number_input("Current Utilization (%)", value=60.00, min_value=0.0, max_value=100.0)
         fees_pct = fees_default
-    st.markdown("---")
-    
-    # New: Loan book upload
+    st.divider()
     st.subheader("Upload Loan Book Data")
-    uploaded_file = st.file_uploader("Upload Loan Book (CSV/Excel)", type=["csv", "xlsx"])
+    uploaded_file = st.file_uploader("Upload Loan Book", type=["csv","xlsx"])
     loan_book_df = None
-    if uploaded_file is not None:
-        if uploaded_file.name.endswith(".csv"):
-            loan_book_df = pd.read_csv(uploaded_file)
-        else:
-            loan_book_df = pd.read_excel(uploaded_file)
-        st.success(f"Loaded {loan_book_df.shape[0]} records from loan book.")
-    
+    if uploaded_file:
+        loan_book_df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
     run = st.button("Compute Pricing")
 
-# Historic insights adjustment
+# ---------- Historic Insight ----------
 historic_spread_adj = 0
-if uploaded_file is not None and loan_book_df is not None:
-    required_cols = ["Product", "Industry", "Stage", "Spread_bps"]
+if loan_book_df is not None:
+    required_cols = ["Product","Industry","Stage","Spread_bps"]
     if all(col in loan_book_df.columns for col in required_cols):
         similar_loans = loan_book_df[
-            (loan_book_df["Product"] == product) &
-            (loan_book_df["Industry"] == industry) &
-            (loan_book_df["Stage"] == stage)
+            (loan_book_df["Product"]==product) &
+            (loan_book_df["Industry"]==industry) &
+            (loan_book_df["Stage"]==stage)
         ]
         if not similar_loans.empty:
             avg_spread = similar_loans["Spread_bps"].mean()
-            st.info(f"Average spread for similar loans: {avg_spread:.0f} bps")
+            st.sidebar.info(f"Historic avg spread: {avg_spread:.0f} bps")
             historic_spread_adj = (avg_spread - 100) * 0.1
-    else:
-        st.warning("Loan book missing required columns for historic comparison.")
 
-# ---------- Main run ----------
+# ---------- Main Run ----------
 if run:
     risk_base = composite_risk(product, industry, malaa_score, ltv_pct if is_fund else 60.0, limit_wc, sales_omr, is_fund)
-    pd_base = pd_from_risk(risk_base, stage)
-    lgd_base = lgd_from_product_ltv(product, ltv_pct if is_fund else 60.0, is_fund)
-    prov_pct_base = f2(pd_base * (lgd_base/100.0))
+    prov_pct_base = f2(pd_from_risk(risk_base, stage) * (lgd_from_product_ltv(product, ltv_pct if is_fund else 60.0, is_fund)/100.0))
     malaa_lbl = malaa_label(malaa_score)
     ind_add = industry_floor_addon(industry_factor[industry])
     prod_add = product_floor_addon(product)
@@ -287,12 +260,12 @@ if run:
         prov_pct= f2(pd_pct * (lgd_pct/100.0))
         raw_bps = base_spread_from_risk(risk_b)
         floors = BUCKET_FLOOR_BPS[bucket] + malaa_add + ind_add + prod_add
-        
+
         center_bps = max(int(round(raw_bps)), floors, min_core_spread_bps)
-        center_bps += historic_spread_adj  # <- add historic adjustment
+        center_bps += historic_spread_adj
 
         util_disc_bps = 0
-        if product in PRODUCTS_UTIL:
+        if not is_fund:
             util_used = (utilization_input/100.0) if utilization_input is not None else u_med_map[industry]
             util_disc_bps = utilization_discount_bps(util_used)
             center_bps += util_disc_bps
@@ -300,64 +273,34 @@ if run:
         band_bps = BUCKET_BAND_BPS[bucket]
         spread_min_bps = max(center_bps - band_bps, floors, min_core_spread_bps)
         spread_max_bps = max(center_bps + band_bps, spread_min_bps + 10)
+
         rate_min = clamp(oibor_pct + spread_min_bps/100.0, 5.00, 12.00)
         rate_max = clamp(oibor_pct + spread_max_bps/100.0, 5.00, 12.00)
         rep_rate = (rate_min + rate_max)/2.0
 
-        if product in PRODUCTS_FUND:
-            rate_min = max(rate_min, 6.00); rate_max = max(rate_max, 6.00); rep_rate = max(rep_rate, 6.00)
-        required_rate = f2(cof_pct + prov_pct + opex_pct + target_nim_pct)
-        rep_rate = max(rep_rate, required_rate)
+        if is_fund:
+            rate_min = max(rate_min, 6.00); rate_max=max(rate_max,6.00); rep_rate=max(rep_rate,6.00)
+        rep_rate = max(rep_rate, f2(cof_pct + prov_pct + opex_pct + target_nim_pct))
 
-        half_band = band_bps/200.0
-        rate_min = clamp(rep_rate - half_band, 5.00, 12.00)
-        rate_max = clamp(rep_rate + half_band, 5.00, 12.00)
-        if rate_max - rate_min < 0.10:
-            rate_max = clamp(rate_min + 0.10, 5.00, 12.00)
-
-        float_min_bps = max(int(round((rate_min - oibor_pct)*100)), min_core_spread_bps)
-        float_rep_bps = max(int(round((rep_rate - oibor_pct)*100)), min_core_spread_bps)
-        float_max_bps = max(int(round((rate_max - oibor_pct)*100)), float_rep_bps + 10)
-
-        if product in PRODUCTS_FUND:
-            EMI, NII_annual, AEA_12, NIM_pct = fund_first_year_metrics(
-                loan_quantum_omr, tenor_months, rep_rate, fees_pct, cof_pct, prov_pct, opex_pct
-            )
-            be_min = fund_breakeven_months(loan_quantum_omr, tenor_months, rate_min, fees_pct, cof_pct, prov_pct, opex_pct, upfront_cost_pct)
-            be_rep = fund_breakeven_months(loan_quantum_omr, tenor_months, rep_rate, fees_pct, cof_pct, prov_pct, opex_pct, upfront_cost_pct)
-            be_max = fund_breakeven_months(loan_quantum_omr, tenor_months, rate_max, fees_pct, cof_pct, prov_pct, opex_pct, upfront_cost_pct)
-            annual_interest = f2((rep_rate/100.0)*AEA_12)
-            annual_fee = f2((fees_pct/100.0)*loan_quantum_omr)
-            annual_funding = f2((cof_pct/100.0)*AEA_12)
-            annual_prov = f2((prov_pct/100.0)*AEA_12)
-            annual_opex = f2((opex_pct/100.0)*AEA_12)
-            nii = f2(annual_interest + annual_fee - (annual_funding + annual_prov + annual_opex))
-
+        # Funded or unfunded output
+        if is_fund:
+            EMI, NII_annual, AEA_12, NIM_pct = fund_first_year_metrics(loan_quantum_omr, tenor_months, rep_rate, fees_pct, cof_pct, prov_pct, opex_pct)
             rows.append({
                 "Pricing Bucket": bucket,
-                "Float Min (bps)": float_min_bps,
-                "Float Rep (bps)": float_rep_bps,
-                "Float Max (bps)": float_max_bps,
-                "Rate Min (%)": f2(rate_min),
                 "Rate Rep (%)": f2(rep_rate),
-                "Rate Max (%)": f2(rate_max),
-                "EMI (OMR)": EMI,
-                "Annual Int Income": annual_interest,
-                "Annual Fee Income": annual_fee,
-                "Annual Funding Cost": annual_funding,
-                "Annual Provision": annual_prov,
-                "Annual Opex": annual_opex,
-                "NII (OMR)": nii,
+                "NII (OMR)": NII_annual,
                 "NIM (%)": NIM_pct,
-                "Breakeven Min": be_min,
-                "Breakeven Rep": be_rep,
-                "Breakeven Max": be_max,
-                "Composite Risk": f2(risk_base),
-                "Provision %": prov_pct
+                "EMI (OMR)": EMI
+            })
+        else:
+            util_used = (utilization_input/100.0) if utilization_input is not None else u_med_map[industry]
+            EAD, NIM_pct, NII_annual = util_metrics(limit_wc, util_used, rep_rate, fees_pct, cof_pct, prov_pct, opex_pct)
+            rows.append({
+                "Pricing Bucket": bucket,
+                "Rate Rep (%)": f2(rep_rate),
+                "EAD (OMR)": EAD,
+                "NII (OMR)": NII_annual,
+                "NIM (%)": NIM_pct
             })
 
-    df_out = pd.DataFrame(rows)
-    st.markdown("### 📊 Pricing Results")
-    st.dataframe(df_out, use_container_width=True)
-    csv_data = df_out.to_csv(index=False).encode("utf-8")
-    st.download_button("Download CSV", csv_data, "pricing_results.csv", "text/csv")
+    st.dataframe(pd.DataFrame(rows), use_container_width=True)
