@@ -213,15 +213,23 @@ with st.sidebar:
         utilization_input = st.number_input("Current Utilization (%)", value=60.0, min_value=0.0, max_value=100.0, step=0.1)
         fees_pct = fees_default
     st.markdown("---")
-    st.subheader("Upload Loan Book Data (Excel only)")
-    uploaded_file = st.file_uploader("Upload Loan Book (Excel)", type=["xlsx"])
+    st.subheader("Upload Loan Book Data (CSV only)")
+    uploaded_file = st.file_uploader("Upload Loan Book (CSV)", type=["csv"])
     loan_book_df = None
     if uploaded_file:
         try:
-            loan_book_df = pd.read_excel(uploaded_file)
+            loan_book_df = pd.read_csv(uploaded_file)
             st.success(f"Loaded {loan_book_df.shape[0]} records from loan book.")
+        except UnicodeDecodeError:
+            try:
+                uploaded_file.seek(0)
+                loan_book_df = pd.read_csv(uploaded_file, encoding='latin1')
+                st.warning("CSV encoding detected as latin1 instead of utf-8.")
+            except Exception as e:
+                st.error(f"Failed to read CSV with utf-8 and latin1 encodings: {e}")
+                loan_book_df = None
         except Exception as e:
-            st.error(f"Error loading Excel file: {e}")
+            st.error(f"Error loading CSV file: {e}")
             loan_book_df = None
     st.markdown("---")
     run = st.button("Compute Pricing")
