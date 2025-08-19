@@ -1,5 +1,5 @@
 import math
-from typing import Dict, Tuple
+from typing import Dict, Any, List, Tuple
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -24,16 +24,11 @@ def num_to_words(n: int) -> str:
     teens = ["ten","eleven","twelve","thirteen","fourteen","fifteen","sixteen","seventeen","eighteen","nineteen"]
     tens = ["","","twenty","thirty","forty","fifty","sixty","seventy","eighty","ninety"]
     def chunk(x: int) -> str:
-        if x == 0:
-            return ""
-        if x < 10:
-            return units[x]
-        if x < 20:
-            return teens[x-10]
-        if x < 100:
-            return tens[x//10] + ("" if x%10==0 else " " + units[x%10])
-        if x < 1000:
-            return units[x//100] + " hundred" + ("" if x%100==0 else " " + chunk(x%100))
+        if x == 0: return ""
+        if x < 10: return units[x]
+        if x < 20: return teens[x-10]
+        if x < 100: return tens[x//10] + ("" if x%10==0 else " " + units[x%10])
+        if x < 1000: return units[x//100] + " hundred" + ("" if x%100==0 else " " + chunk(x%100))
         return ""
     if n == 0:
         return "zero"
@@ -259,6 +254,7 @@ opex_pct = st.sidebar.number_input("Opex % (annual)", min_value=0.0, max_value=2
 upfront_cost_pct = st.sidebar.number_input("Upfront Cost %", min_value=0.0, max_value=10.0, value=0.5, step=0.1)
 principal = st.sidebar.number_input("Principal", min_value=0.0, value=1000.0, step=1.0)
 
+# FIXED: removed int() cast and added format="%d" for tenor input
 tenor_months = st.number_input("Tenor (months)", value=36, min_value=6, max_value=360, step=1, format="%d")
 
 st.sidebar.markdown("---")
