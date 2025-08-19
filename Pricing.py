@@ -192,14 +192,14 @@ with st.sidebar:
     st.subheader("Borrower & Product")
     product = st.selectbox("Product", PRODUCTS_FUND + PRODUCTS_UTIL)
     industry = st.selectbox("Industry", list(industry_factor.keys()))
-    malaa_score = int(st.number_input("Mala’a Credit Score", value=750, step=1))
-    stage = int(st.number_input("IFRS-9 Stage", value=1, min_value=1, max_value=3, step=1))
+    malaa_score = st.number_input("Mala’a Credit Score", value=750, step=1, format="%d")
+    stage = st.number_input("IFRS-9 Stage", value=1, min_value=1, max_value=3, step=1, format="%d")
     snp_rating = st.selectbox("S&P Issuer Rating", SNP_LIST)
     new_customer = st.checkbox("Is New Customer?", value=False, help="Adds premium for new customers")
     st.markdown("---")
     st.subheader("Loan Details")
-    tenor_months = int(st.number_input("Tenor (months)", 36, min_value=6, max_value=360, step=1))
-    loan_quantum_omr = st.number_input("Loan Quantum (OMR)", 100000.0, step=1000.0)
+    tenor_months = st.number_input("Tenor (months)", value=36, min_value=6, max_value=360, step=1, format="%d")
+    loan_quantum_omr = st.number_input("Loan Quantum (OMR)", value=100000.0, step=1000.0)
     is_fund = product in PRODUCTS_FUND
     if is_fund:
         ltv_pct = st.number_input("Loan-to-Value (%)", value=70.0)
@@ -208,9 +208,9 @@ with st.sidebar:
         utilization_input = None
     else:
         ltv_pct = float("nan")
-        limit_wc = st.number_input("Working Capital / Limit (OMR)", 80000.0)
-        sales_omr = st.number_input("Annual Sales (OMR)", 600000.0)
-        utilization_input = st.number_input("Current Utilization (%)", 60.0, min_value=0.0, max_value=100.0, step=0.1)
+        limit_wc = st.number_input("Working Capital / Limit (OMR)", value=80000.0)
+        sales_omr = st.number_input("Annual Sales (OMR)", value=600000.0)
+        utilization_input = st.number_input("Current Utilization (%)", value=60.0, min_value=0.0, max_value=100.0, step=0.1)
         fees_pct = fees_default
     st.markdown("---")
     st.subheader("Upload Loan Book Data (CSV only)")
