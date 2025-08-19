@@ -127,6 +127,11 @@ def utilization_discount_bps(u: float)->int:
         return +15
     else:
         return +40
+def malaa_spread_adj_bps(score: int) -> int:
+    # Spread reduction from 100 bps at score 300 down to 0 bps at 900
+    clamped = max(300, min(score, 900))
+    adj = 100 - ((clamped - 300) * 100) / 600
+    return int(-round(adj))
 def fund_first_year_metrics(P: float, tenor_m: int, rep_rate: float, fees_pct: float,
                             cof_pct: float, prov_pct: float, opex_pct: float)->Tuple[float,float,float,float]:
     i = rep_rate/100.0/12.0
@@ -245,14 +250,11 @@ with st.sidebar:
     run = st.button("Compute Pricing")
 
 industry_utilization = industry_utilization_map.get(industry, 0.5)
-utilization_subsidy_bps = utilization_discount_bps(industry_utilization)
 new_customer_risk_premium_bps = 25 if new_customer else 0
 sp_risk = SP_RISK_MAP.get(snp_rating, 5)
 
-# Define low risk industry set for subsidy logic
 low_risk_industries = set(TOP_LOW_RISK_INDUSTRIES)
 
-# Define spread adjustment bps for S&P ratings (example values)
 snp_spread_adj_bps_map = {
     "AAA": -30, "AA+": -25, "AA": -20, "AA-": -15,
     "A+": -10, "A": -5, "A-": 0,
@@ -263,18 +265,17 @@ snp_spread_adj_bps_map = {
     "CC": 65, "C": 70
 }
 
-# Calculate nim subsidy factor based on rating and industry
+# Determine nim subsidy target based on rating and industry risk
 if sp_risk == 1:
-    nim_subsidy_target = max(0.8, target_nim_pct - 1.0)  # Low risk, heavy subsidy capped at 0.8%
+    nim_subsidy_target = max(0.8, target_nim_pct - 1.0)
 elif industry in low_risk_industries and snp_rating in ["AAA", "AA+", "AA", "AA-"]:
-    nim_subsidy_target = max(1.0, target_nim_pct - 0.5)  # Low risk industry, high rating moderate subsidy
+    nim_subsidy_target = max(1.0, target_nim_pct - 0.5)
 elif snp_rating in ["BBB-", "BB+", "BB", "BB-"]:
-    nim_subsidy_target = target_nim_pct + 0.5  # Higher risk rating, no subsidy, premium
+    nim_subsidy_target = target_nim_pct + 0.5
 else:
     nim_subsidy_target = target_nim_pct
 
-# Spread adjustment for S&P rating
-snp_spread_adj_bps = snp_spread_adj_bps_map.get(snp_rating, 0)  # Default to 0 if missing
+snp_spread_adj_bps = snp_spread_adj_bps_map.get(snp_rating, 0)
 
 historic_spread_adj = 0
 if loan_book_df is not None:
@@ -293,6 +294,7 @@ if loan_book_df is not None:
 if run:
     util_base = utilization_input / 100.0 if utilization_input is not None and not is_fund else industry_utilization
     utilization_adj_bps = utilization_discount_bps(util_base)
+    malaa_adj_bps = malaa_spread_adj_bps(malaa_score)
     risk_base = composite_risk(product, industry, malaa_score,
                                ltv_pct if is_fund else 60.0,
                                limit_wc, sales_omr, is_fund)
@@ -316,73 +318,58 @@ if run:
         center_bps += snp_spread_adj_bps
         center_bps += utilization_adj_bps
         center_bps += new_customer_risk_premium_bps
+        center_bps += malaa_adj_bps
         center_bps += historic_spread_adj
         band_bps = BUCKET_BAND_BPS[bucket]
         spread_min_bps = max(center_bps - band_bps, floors, min_core_spread_bps)
         spread_max_bps = max(center_bps + band_bps, spread_min_bps + 10)
         rate_min = clamp(oibor_pct + spread_min_bps / 100.0, 5.00, 12.00)
         rate_max = clamp(oibor_pct + spread_max_bps / 100.0, 5.00, 12.00)
-        rep_rate = (rate_min + rate_max) / 2.0
+
         if is_fund:
-            rate_min = max(rate_min, 6.00)
-            rate_max = max(rate_max, 6.00)
-            rep_rate = max(rep_rate, 6.00)
-        required_rate = cof_pct + prov_pct + opex_pct + nim_subsidy_target
-        rep_rate = max(rep_rate, required_rate)
-        if is_fund:
-            EMI, NII_annual, AEA_12, NIM_pct = fund_first_year_metrics(
-                loan_quantum_omr, tenor_months, rep_rate, fees_pct, cof_pct, prov_pct, opex_pct)
             be_min = fund_breakeven_months(
                 loan_quantum_omr, tenor_months, rate_min, fees_pct, cof_pct,
-                prov_pct, opex_pct, upfront_cost_pct)
-            be_rep = fund_breakeven_months(
-                loan_quantum_omr, tenor_months, rep_rate, fees_pct, cof_pct,
                 prov_pct, opex_pct, upfront_cost_pct)
             be_max = fund_breakeven_months(
                 loan_quantum_omr, tenor_months, rate_max, fees_pct, cof_pct,
                 prov_pct, opex_pct, upfront_cost_pct)
+            rep_rate = (rate_min + rate_max) / 2.0
+            EMI, NII_annual, AEA_12, NIM_pct = fund_first_year_metrics(
+                loan_quantum_omr, tenor_months, rep_rate, fees_pct, cof_pct, prov_pct, opex_pct)
             rows.append({
                 "Pricing Bucket": bucket,
                 "Float Min (bps)": int(round((rate_min - oibor_pct) * 100)),
-                "Float Rep (bps)": int(round((rep_rate - oibor_pct) * 100)),
                 "Float Max (bps)": int(round((rate_max - oibor_pct) * 100)),
                 "Rate Min (%)": round(rate_min, 2),
-                "Rate Rep (%)": round(rep_rate, 2),
                 "Rate Max (%)": round(rate_max, 2),
-                "EMI (OMR)": EMI,
-                "Annual Int Income": round((rep_rate / 100.0) * AEA_12, 2),
-                "Annual Fee Income": round((fees_pct / 100.0) * loan_quantum_omr, 2),
-                "Annual Funding Cost": round((cof_pct / 100.0) * AEA_12, 2),
-                "Annual Provision": round((prov_pct / 100.0) * AEA_12, 2),
-                "Annual Opex": round((opex_pct / 100.0) * AEA_12, 2),
-                "NII (OMR)": NII_annual,
-                "NIM (%)": NIM_pct,
                 "Breakeven Min": be_min,
-                "Breakeven Rep": be_rep,
                 "Breakeven Max": be_max,
-                "Composite Risk": round(risk_base, 2),
-                "Provision %": prov_pct,
+                "NIM (%)": NIM_pct
             })
         else:
+            rep_rate = (rate_min + rate_max) / 2.0
             EAD, NIM_pct, NII_annual = util_metrics(
                 limit_wc, util_base, rep_rate, fees_pct, cof_pct, prov_pct, opex_pct)
             rows.append({
                 "Pricing Bucket": bucket,
                 "Float Min (bps)": int(round((rate_min - oibor_pct) * 100)),
-                "Float Rep (bps)": int(round((rep_rate - oibor_pct) * 100)),
                 "Float Max (bps)": int(round((rate_max - oibor_pct) * 100)),
                 "Rate Min (%)": round(rate_min, 2),
-                "Rate Rep (%)": round(rep_rate, 2),
                 "Rate Max (%)": round(rate_max, 2),
-                "EAD (OMR)": EAD,
-                "NII (OMR)": NII_annual,
-                "NIM (%)": NIM_pct,
-                "Composite Risk": round(risk_base,2),
-                "Provision %": prov_pct,
+                "Breakeven Min": "N/A",
+                "Breakeven Max": "N/A",
+                "NIM (%)": NIM_pct
             })
     df_out = pd.DataFrame(rows)
-    st.markdown("### 📊 Pricing Results")
-    st.dataframe(df_out, use_container_width=True)
+    df_display = df_out[[
+        "Pricing Bucket",
+        "Float Min (bps)", "Float Max (bps)",
+        "Rate Min (%)", "Rate Max (%)",
+        "Breakeven Min", "Breakeven Max",
+        "NIM (%)"
+    ]]
+    st.markdown("### 📊 Pricing Summary")
+    st.dataframe(df_display, use_container_width=True)
     st.caption(f"Applied NIM Target: {nim_subsidy_target:.2f}%, S&P Rating: {snp_rating}, "
                f"Industry Utilization: {industry_utilization*100:.0f}%, "
-               f"Utilization Spread Adj: {utilization_adj_bps} bps, New Customer Adj: {new_customer_risk_premium_bps} bps")
+               f"Utilization Spread Adj: {utilization_adj_bps} bps, Mala'a Score Adj: {malaa_adj_bps} bps, New Customer Adj: {new_customer_risk_premium_bps} bps")
