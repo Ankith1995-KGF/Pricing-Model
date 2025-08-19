@@ -192,7 +192,7 @@ def util_metrics(limit_or_wc: float, u: float, rep_rate: float, fees_pct: float,
     NII_annual = (margin_pct/100.0) * EAD
     return f2(EAD), f2(NIM_pct), f2(NII_annual)
 
-# === UI layout and styling ===
+# === UI and styling ===
 st.set_page_config(page_title="rt 360 risk-adjusted pricing", page_icon="💠", layout="wide")
 st.markdown("""
 <style>
@@ -204,10 +204,9 @@ tr:nth-child(even) {background-color: #f3f9ff;}
 tr:hover {background-color: #eaf3ff;}
 th {background-color:#1666d3;color:white;}
 </style>
-<div class="big"><span class="blue">rt</span> <span class="green">360</span> — Enhanced Pricing Model with S&P & Utilization</div>
+<div class="big"><span class="blue">rt</span> <span class="green">360</span> — Pricing Model with S&P Ratings, Utilization, and Subsidies</div>
 """, unsafe_allow_html=True)
 
-# Sidebar with inputs including S&P rating and new customer flag
 with st.sidebar:
     st.subheader("Market & Bank Assumptions")
     oibor_pct = st.number_input("OIBOR (%)", value=4.10, step=0.01)
@@ -223,23 +222,22 @@ with st.sidebar:
     malaa_score = int(st.number_input("Mala’a Credit Score", value=750, step=1))
     stage = int(st.number_input("IFRS-9 Stage", value=1, min_value=1, max_value=3, step=1))
     snp_rating = st.selectbox("S&P Issuer Rating", SNP_LIST)
-    new_customer = st.checkbox("Is New Customer?", value=False, help="Adds risk premium for new borrowers")
+    new_customer = st.checkbox("Is New Customer?", value=False, help="Adds premium for new customers")
     st.markdown("---")
     st.subheader("Loan Details")
-    tenor_months = int(st.number_input("Tenor (months)", value=36, min_value=6, max_value=360, step=1))
-    loan_quantum_omr = st.number_input("Loan Quantum (OMR)", value=100000.0, step=1000.0)
+    tenor_months = int(st.number_input("Tenor (months)", 36, min_value=6, max_value=360, step=1))
+    loan_quantum_omr = st.number_input("Loan Quantum (OMR)", 100000.0, step=1000.0)
     is_fund = product in PRODUCTS_FUND
     if is_fund:
         ltv_pct = st.number_input("Loan-to-Value (%)", value=70.0)
-        limit_wc = 0.0
-        sales_omr = 0.0
-        fees_pct = fees_default if product=="Export Finance" else 0.0
+        limit_wc = 0.0; sales_omr = 0.0
+        fees_pct = fees_default if product == "Export Finance" else 0.0
         utilization_input = None
     else:
         ltv_pct = float("nan")
-        limit_wc = st.number_input("Working Capital / Limit (OMR)", value=80000.0)
-        sales_omr = st.number_input("Annual Sales (OMR)", value=600000.0)
-        utilization_input = st.number_input("Current Utilization (%)", value=60.0, min_value=0.0, max_value=100.0, step=0.1)
+        limit_wc = st.number_input("Working Capital / Limit (OMR)", 80000.0)
+        sales_omr = st.number_input("Annual Sales (OMR)", 600000.0)
+        utilization_input = st.number_input("Current Utilization (%)", 60.0, min_value=0.0, max_value=100.0, step=0.1)
         fees_pct = fees_default
     st.markdown("---")
     st.subheader("Upload Loan Book Data (CSV only)")
@@ -249,12 +247,20 @@ with st.sidebar:
         try:
             loan_book_df = pd.read_csv(uploaded_file)
             st.success(f"Loaded {loan_book_df.shape[0]} records from loan book.")
+        except UnicodeDecodeError:
+            try:
+                uploaded_file.seek(0)
+                loan_book_df = pd.read_csv(uploaded_file, encoding='latin1')
+                st.warning("CSV encoding detected as latin1 instead of utf-8.")
+            except Exception as e:
+                st.error(f"Failed to read CSV with utf-8 and latin1 encodings: {e}")
+                loan_book_df = None
         except Exception as e:
             st.error(f"Error loading CSV file: {e}")
+            loan_book_df = None
     st.markdown("---")
     run = st.button("Compute Pricing")
 
-# Processing before pricing
 industry_utilization = industry_utilization_map.get(industry, 0.5)
 utilization_subsidy_bps = -15 if industry_utilization > 0.60 else 0
 new_customer_risk_premium_bps = 25 if new_customer else 0
@@ -272,20 +278,21 @@ historic_spread_adj = 0
 if loan_book_df is not None:
     required_cols = ["Product", "Industry", "Stage", "Spread_bps"]
     if all(col in loan_book_df.columns for col in required_cols):
-        similar_loans = loan_book_df[(loan_book_df["Product"] == product) &
-                                     (loan_book_df["Industry"] == industry) &
-                                     (loan_book_df["Stage"] == stage)]
+        similar_loans = loan_book_df[
+            (loan_book_df["Product"] == product) &
+            (loan_book_df["Industry"] == industry) &
+            (loan_book_df["Stage"] == stage)
+        ]
         if not similar_loans.empty:
             avg_spread = similar_loans["Spread_bps"].mean()
             historic_spread_adj = (avg_spread - 100) * 0.1
             st.sidebar.info(f"Historic avg spread for selection: {avg_spread:.0f} bps")
 
-# Main pricing execution
 if run:
     util_base = utilization_input / 100.0 if utilization_input is not None and not is_fund else industry_utilization
     risk_base = composite_risk(product, industry, malaa_score,
-        ltv_pct if is_fund else 60.0,
-        limit_wc, sales_omr, is_fund)
+                               ltv_pct if is_fund else 60.0,
+                               limit_wc, sales_omr, is_fund)
     pd_base = pd_from_risk(risk_base, stage)
     lgd_base = lgd_from_product_ltv(product, ltv_pct if is_fund else 60.0, is_fund)
     prov_pct_base = round(pd_base * (lgd_base / 100.0), 2)
@@ -313,8 +320,8 @@ if run:
         spread_min_bps = max(center_bps - band_bps, floors, min_core_spread_bps)
         spread_max_bps = max(center_bps + band_bps, spread_min_bps + 10)
 
-        rate_min = clamp(oibor_pct + spread_min_bps/100.0, 5.00, 12.00)
-        rate_max = clamp(oibor_pct + spread_max_bps/100.0, 5.00, 12.00)
+        rate_min = clamp(oibor_pct + spread_min_bps / 100.0, 5.00, 12.00)
+        rate_max = clamp(oibor_pct + spread_max_bps / 100.0, 5.00, 12.00)
         rep_rate = (rate_min + rate_max) / 2.0
 
         if is_fund:
@@ -337,6 +344,7 @@ if run:
             be_max = fund_breakeven_months(
                 loan_quantum_omr, tenor_months, rate_max, fees_pct, cof_pct,
                 prov_pct, opex_pct, upfront_cost_pct)
+
             rows.append({
                 "Pricing Bucket": bucket,
                 "Float Min (bps)": int(round((rate_min - oibor_pct) * 100)),
@@ -382,4 +390,4 @@ if run:
     st.dataframe(df_out, use_container_width=True)
     st.caption(f"Applied NIM Target: {target_nim_to_apply:.2f}%, S&P Rating: {snp_rating}, "
                f"Industry Utilization: {industry_utilization*100:.0f}%, "
-               f"Utilization Spread Adj.: {utilization_subsidy_bps} bps, New Customer Adj.: {new_customer_risk_premium_bps} bps")
+               f"Utilization Spread Adj: {utilization_subsidy_bps} bps, New Customer Adj: {new_customer_risk_premium_bps} bps")
