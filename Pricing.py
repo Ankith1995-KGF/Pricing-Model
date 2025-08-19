@@ -3,27 +3,22 @@ from typing import Dict, Any, List, Tuple
 import numpy as np
 import pandas as pd
 import streamlit as st
-
 # ---------- Global formatting ----------
 pd.options.display.float_format = lambda x: f"{x:.2f}"
-
 def f2(x: float) -> float:
     try:
         return float(np.round(float(x), 2))
     except Exception:
         return float("nan")
-
 def fmt2(x) -> str:
     try:
         return f"{f2(float(x)):.2f}"
     except Exception:
         return ""
-
 def num_to_words(n: int) -> str:
     units = ["","one","two","three","four","five","six","seven","eight","nine"]
     teens = ["ten","eleven","twelve","thirteen","fourteen","fifteen","sixteen","seventeen","eighteen","nineteen"]
     tens  = ["","","twenty","thirty","forty","fifty","sixty","seventy","eighty","ninety"]
-
     def chunk(x: int) -> str:
         if x == 0: return ""
         if x < 10: return units[x]
@@ -31,7 +26,6 @@ def num_to_words(n: int) -> str:
         if x < 100: return tens[x//10] + ("" if x%10==0 else " " + units[x%10])
         if x < 1000: return units[x//100] + " hundred" + ("" if x%100==0 else " " + chunk(x%100))
         return ""
-
     if n == 0: return "zero"
     parts = []
     for div,name in [(10**9,"billion"),(10**6,"million"),(10**3,"thousand")]:
@@ -40,11 +34,9 @@ def num_to_words(n: int) -> str:
             n %= div
     if n > 0: parts.append(chunk(n))
     return " ".join(parts)
-
 # ---------- Core data and constants ----------
 PRODUCTS_FUND = ["Asset Backed Loan","Term Loan","Export Finance"]
 PRODUCTS_UTIL = ["Working Capital","Trade Finance","Supply Chain Finance","Vendor Finance"]
-
 product_factor: Dict[str,float] = {
     "Asset Backed Loan":1.35, "Term Loan":1.20, "Export Finance":1.10,
     "Vendor Finance":0.95, "Supply Chain Finance":0.90, "Trade Finance":0.85, "Working Capital":0.95
@@ -59,13 +51,11 @@ u_med_map: Dict[str,float] = {
     "Healthcare":0.45,"Hospitality":0.35,"Oil & Gas":0.50,"Real Estate":0.30,"Utilities":0.55,
     "Mining":0.45,"Agriculture":0.40
 }
-
 BUCKETS = ["Low","Medium","High"]
 BUCKET_MULT = {"Low":0.90,"Medium":1.00,"High":1.25}
 BUCKET_BAND_BPS = {"Low":60,"Medium":90,"High":140}
 BUCKET_FLOOR_BPS = {"Low":150,"Medium":225,"High":325}
 MALAA_FLOOR_BPS = {"High (poor score)":175,"Medium-High":125,"Medium":75,"Low (good score)":0}
-
 SNP_LIST = [
     "AAA","AA+","AA","AA-","A+","A","A-",
     "BBB+","BBB","BBB-","BB+","BB","BB-",
@@ -82,22 +72,17 @@ SP_RISK_MAP = {
 }
 TOP_LOW_RISK_INDUSTRIES = ["Healthcare", "Utilities", "Oil & Gas", "Retail"]
 industry_utilization_map = dict(u_med_map)
-
 # ---------- Utility Functions ----------
 def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(x, hi))
-
 def malaa_factor(score:int)->float:
     return float(np.clip(1.45 - (score-300)*(0.90/600), 0.55, 1.45))
-
 def ltv_factor(ltv: float)->float:
     return float(np.clip(0.55 + 0.0075*ltv, 0.80, 1.50))
-
 def wcs_factor(limit_wc: float, sales: float)->float:
     if sales <= 0: return 1.20
     ratio = limit_wc / sales
     return float(np.clip(0.70 + 1.00*min(ratio, 1.2), 0.70, 1.70))
-
 def composite_risk(product: str, industry: str, malaa: int, ltv: float,
                    limit_wc: float, sales: float, is_fund: bool) -> float:
     pf = product_factor[product]
@@ -105,7 +90,6 @@ def composite_risk(product: str, industry: str, malaa: int, ltv: float,
     mf = malaa_factor(malaa)
     rf = ltv_factor(ltv if is_fund else 60.0) if is_fund else wcs_factor(limit_wc, sales)
     return float(np.clip(pf*inf*mf*rf, 0.4, 3.5))
-
 def pd_from_risk(r: float, stage: int)->float:
     xs=np.array([0.4,1.0,2.0,3.5])
     ys=np.array([0.3,1.0,3.0,6.0])
@@ -113,35 +97,28 @@ def pd_from_risk(r: float, stage: int)->float:
     if stage==2: pd *= 2.5
     if stage==3: pd *= 6.0
     return float(np.clip(pd, 0.10, 60.0))
-
 def lgd_from_product_ltv(prod: str, ltv: float, is_fund: bool)->float:
-    base = 32 if prod=="Asset Backed Loan" else 38 if prod=="Term Loan" else 35 if prod=="Export Finance" else 30
+    base = 32 if prod == "Asset Backed Loan" else 38 if prod == "Term Loan" else 35 if prod == "Export Finance" else 30
     adj = max(0.0,(ltv if ltv and not np.isnan(ltv) else 0) - 50.0 ) * 0.25
     if not is_fund: adj += 8.0
     return float(np.clip(base+adj, 25.0, 70.0))
-
 def malaa_label(score:int)->str:
     if score < 500: return "High (poor score)"
     if score < 650: return "Medium-High"
     if score < 750: return "Medium"
     return "Low (good score)"
-
 def industry_floor_addon(ind_fac: float)->int:
     return 100 if ind_fac>=1.25 else (50 if ind_fac>=1.10 else 0)
-
 def product_floor_addon(prod:str)->int:
     return 125 if prod=="Asset Backed Loan" else (75 if prod in ["Term Loan","Export Finance"] else 0)
-
 def base_spread_from_risk(risk: float)->float:
     return 75 + 350*(risk - 1.0)
-
 def utilization_discount_bps(u: float)->int:
     if u >= 0.85: return -40
     if u >= 0.70: return -25
     if u >= 0.50: return 0
     if u >= 0.30: return +15
     return +40
-
 def fund_first_year_metrics(P: float, tenor_m: int, rep_rate: float, fees_pct: float,
                             cof_pct: float, prov_pct: float, opex_pct: float)->Tuple[float,float,float,float]:
     i = rep_rate/100.0/12.0
@@ -164,7 +141,6 @@ def fund_first_year_metrics(P: float, tenor_m: int, rep_rate: float, fees_pct: f
     NII_annual = sum_net_12
     NIM_pct = (NII_annual/AEA_12)*100.0
     return f2(EMI), f2(NII_annual), f2(AEA_12), f2(NIM_pct)
-
 def fund_breakeven_months(P: float, tenor_m:int, rate_pct: float, fees_pct: float, cof_pct: float,
                           prov_pct: float, opex_pct: float, upfront_cost_pct: float):
     i = rate_pct/100.0/12.0
@@ -183,7 +159,6 @@ def fund_breakeven_months(P: float, tenor_m:int, rate_pct: float, fees_pct: floa
         bal = max(bal - principal, 0.0)
         if cum >= 0: return m
     return "Breakeven not within the tenor"
-
 def util_metrics(limit_or_wc: float, u: float, rep_rate: float, fees_pct: float,
                  cof_pct: float, prov_pct: float, opex_pct: float):
     EAD = max(limit_or_wc, 0.0) * u
@@ -191,8 +166,7 @@ def util_metrics(limit_or_wc: float, u: float, rep_rate: float, fees_pct: float,
     NIM_pct = margin_pct
     NII_annual = (margin_pct/100.0) * EAD
     return f2(EAD), f2(NIM_pct), f2(NII_annual)
-
-# === UI and styling ===
+# = UI and styling =
 st.set_page_config(page_title="rt 360 risk-adjusted pricing", page_icon="💠", layout="wide")
 st.markdown("""
 <style>
@@ -206,7 +180,6 @@ th {background-color:#1666d3;color:white;}
 </style>
 <div class="big"><span class="blue">rt</span> <span class="green">360</span> — Pricing Model with S&P Ratings, Utilization, and Subsidies</div>
 """, unsafe_allow_html=True)
-
 with st.sidebar:
     st.subheader("Market & Bank Assumptions")
     oibor_pct = st.number_input("OIBOR (%)", value=4.10, step=0.01)
@@ -260,11 +233,9 @@ with st.sidebar:
             loan_book_df = None
     st.markdown("---")
     run = st.button("Compute Pricing")
-
 industry_utilization = industry_utilization_map.get(industry, 0.5)
 utilization_subsidy_bps = -15 if industry_utilization > 0.60 else 0
 new_customer_risk_premium_bps = 25 if new_customer else 0
-
 sp_risk = SP_RISK_MAP.get(snp_rating, 5)
 if sp_risk == 1:
     nim_subsidy_target = 1.85
@@ -273,7 +244,6 @@ elif industry in TOP_LOW_RISK_INDUSTRIES:
 else:
     nim_subsidy_target = target_nim_pct
 target_nim_to_apply = nim_subsidy_target
-
 historic_spread_adj = 0
 if loan_book_df is not None:
     required_cols = ["Product", "Industry", "Stage", "Spread_bps"]
@@ -287,7 +257,6 @@ if loan_book_df is not None:
             avg_spread = similar_loans["Spread_bps"].mean()
             historic_spread_adj = (avg_spread - 100) * 0.1
             st.sidebar.info(f"Historic avg spread for selection: {avg_spread:.0f} bps")
-
 if run:
     util_base = utilization_input / 100.0 if utilization_input is not None and not is_fund else industry_utilization
     risk_base = composite_risk(product, industry, malaa_score,
@@ -301,7 +270,6 @@ if run:
     prod_add = product_floor_addon(product)
     malaa_add = MALAA_FLOOR_BPS[malaa_lbl]
     min_core_spread_bps = 125
-
     rows = []
     for bucket in BUCKETS:
         risk_b = float(np.clip(risk_base * BUCKET_MULT[bucket], 0.4, 3.5))
@@ -310,28 +278,22 @@ if run:
         prov_pct = round(pd_pct * (lgd_pct / 100.0), 2)
         raw_bps = base_spread_from_risk(risk_b)
         floors = BUCKET_FLOOR_BPS[bucket] + malaa_add + ind_add + prod_add
-
         center_bps = max(round(raw_bps), floors, min_core_spread_bps)
         center_bps += utilization_subsidy_bps
         center_bps += new_customer_risk_premium_bps
         center_bps += historic_spread_adj
-
         band_bps = BUCKET_BAND_BPS[bucket]
         spread_min_bps = max(center_bps - band_bps, floors, min_core_spread_bps)
         spread_max_bps = max(center_bps + band_bps, spread_min_bps + 10)
-
         rate_min = clamp(oibor_pct + spread_min_bps / 100.0, 5.00, 12.00)
         rate_max = clamp(oibor_pct + spread_max_bps / 100.0, 5.00, 12.00)
         rep_rate = (rate_min + rate_max) / 2.0
-
         if is_fund:
             rate_min = max(rate_min, 6.00)
             rate_max = max(rate_max, 6.00)
             rep_rate = max(rep_rate, 6.00)
-
         required_rate = cof_pct + prov_pct + opex_pct + target_nim_to_apply
         rep_rate = max(rep_rate, required_rate)
-
         if is_fund:
             EMI, NII_annual, AEA_12, NIM_pct = fund_first_year_metrics(
                 loan_quantum_omr, tenor_months, rep_rate, fees_pct, cof_pct, prov_pct, opex_pct)
@@ -344,7 +306,6 @@ if run:
             be_max = fund_breakeven_months(
                 loan_quantum_omr, tenor_months, rate_max, fees_pct, cof_pct,
                 prov_pct, opex_pct, upfront_cost_pct)
-
             rows.append({
                 "Pricing Bucket": bucket,
                 "Float Min (bps)": int(round((rate_min - oibor_pct) * 100)),
@@ -384,7 +345,6 @@ if run:
                 "Composite Risk": round(risk_base,2),
                 "Provision %": prov_pct,
             })
-
     df_out = pd.DataFrame(rows)
     st.markdown("### 📊 Pricing Results")
     st.dataframe(df_out, use_container_width=True)
