@@ -160,6 +160,14 @@ def fund_first_year_metrics(P: float, tenor_m: int, rep_rate: float, fees_pct: f
     NIM_pct = (NII_annual/AEA_12)*100.0
     return f2(EMI), f2(NII_annual), f2(AEA_12), f2(NIM_pct)
 
+def util_metrics(limit_or_wc: float, u: float, rep_rate: float, fees_pct: float,
+                 cof_pct: float, prov_pct: float, opex_pct: float):
+    EAD = max(limit_or_wc, 0.0) * u
+    margin_pct = rep_rate + fees_pct - (cof_pct + prov_pct + opex_pct)
+    NIM_pct = margin_pct
+    NII_annual = (margin_pct/100.0) * EAD
+    return f2(EAD), f2(NIM_pct), f2(NII_annual)
+
 def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(x, hi))
 
@@ -169,15 +177,13 @@ st.set_page_config(page_title="rt 360 risk-adjusted pricing", page_icon="💠", 
 
 st.markdown("""
 <style>
-.big {font-size:28px;font-weight:800}
-.blue {color:#1666d3}
-.green {color:#18a05e}
+.big {font-size:28px;font-weight:900; color:#1E2D42; margin-bottom:25px;}
 .dataframe td, .dataframe th {border:1px solid #ddd; padding:8px; text-align:right;}
-.dataframe th {background-color:#1666d3;color:white; text-align:center;}
-tr:nth-child(even) {background-color:#f9fbff;}
-tr:hover {background-color:#dce9ff;}
+.dataframe th {background-color:#24427C;color:white; text-align:center;}
+tr:nth-child(even) {background-color:#f9faff;}
+tr:hover {background-color:#cee1ff;}
 </style>
-<div class="big"><span class="blue">rt</span> <span class="green">360</span> &mdash; Pricing Dashboard with S&P Ratings & Utilization</div>
+<div class="big">rt <span style="color:#18a05e;">360</span> &mdash; Pricing Dashboard with S&P Ratings & Utilization</div>
 """, unsafe_allow_html=True)
 
 with st.sidebar:
@@ -341,18 +347,18 @@ if run:
         "Rate Min (%)", "Rate Max (%)",
         "NIM (%)"
     ]]
-    # Display with highlighting for UX improvements
+
     def highlight_nim(val):
         if val >= 8:
-            color = '#85e085'  # light green for high NIM
+            color = '#d4f1c5'  # soft green for high NIM
         elif val <= 4:
-            color = '#f4a582'  # light red for low NIM
+            color = '#f9d6d5'  # soft red for low NIM
         else:
             color = ''
         return f'background-color: {color}'
 
     styled_df = df_display.style \
-        .set_table_styles([{'selector': 'th', 'props': [('background-color', '#1666d3'), ('color', 'white')]}]) \
+        .set_table_styles([{'selector': 'th', 'props': [('background-color', '#24427C'), ('color', 'white'), ('font-weight', 'bold')]}]) \
         .applymap(highlight_nim, subset=["NIM (%)"]) \
         .format({
             "Float Min (bps)": "{:d}",
@@ -361,7 +367,7 @@ if run:
             "Rate Max (%)": "{:.2f}",
             "NIM (%)": "{:.2f}"
         }) \
-        .set_properties(**{'text-align': 'right'})
+        .set_properties(**{'text-align': 'right', 'font-family': 'Arial, sans-serif', 'font-size': '14px'})
 
     st.markdown("### 📊 Pricing Summary")
     st.dataframe(styled_df, use_container_width=True)
