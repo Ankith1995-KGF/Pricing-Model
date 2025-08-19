@@ -3,18 +3,22 @@ from typing import Dict, Any, List, Tuple
 import numpy as np
 import pandas as pd
 import streamlit as st
+
 # ---------- Global formatting ----------
 pd.options.display.float_format = lambda x: f"{x:.2f}"
+
 def f2(x: float) -> float:
     try:
         return float(np.round(float(x), 2))
     except Exception:
         return float("nan")
+
 def fmt2(x) -> str:
     try:
         return f"{f2(float(x)):.2f}"
     except Exception:
         return ""
+
 def num_to_words(n: int) -> str:
     units = ["","one","two","three","four","five","six","seven","eight","nine"]
     teens = ["ten","eleven","twelve","thirteen","fourteen","fifteen","sixteen","seventeen","eighteen","nineteen"]
@@ -34,6 +38,7 @@ def num_to_words(n: int) -> str:
             n %= div
     if n > 0: parts.append(chunk(n))
     return " ".join(parts)
+
 # ---------- Core data and constants ----------
 PRODUCTS_FUND = ["Asset Backed Loan","Term Loan","Export Finance"]
 PRODUCTS_UTIL = ["Working Capital","Trade Finance","Supply Chain Finance","Vendor Finance"]
@@ -72,6 +77,7 @@ SP_RISK_MAP = {
 }
 TOP_LOW_RISK_INDUSTRIES = ["Healthcare", "Utilities", "Oil & Gas", "Retail"]
 industry_utilization_map = dict(u_med_map)
+
 # ---------- Utility Functions ----------
 def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(x, hi))
@@ -114,7 +120,6 @@ def product_floor_addon(prod:str)->int:
 def base_spread_from_risk(risk: float)->float:
     return 75 + 350*(risk - 1.0)
 def utilization_discount_bps(u: float)->int:
-    # Enhanced discount for higher utilization for competitiveness
     if u >= 0.90:
         return -50
     elif u >= 0.85:
@@ -128,10 +133,10 @@ def utilization_discount_bps(u: float)->int:
     else:
         return +40
 def malaa_spread_adj_bps(score: int) -> int:
-    # Spread reduction from 100 bps at score 300 down to 0 bps at 900
     clamped = max(300, min(score, 900))
     adj = 100 - ((clamped - 300) * 100) / 600
     return int(-round(adj))
+
 def fund_first_year_metrics(P: float, tenor_m: int, rep_rate: float, fees_pct: float,
                             cof_pct: float, prov_pct: float, opex_pct: float)->Tuple[float,float,float,float]:
     i = rep_rate/100.0/12.0
@@ -154,45 +159,25 @@ def fund_first_year_metrics(P: float, tenor_m: int, rep_rate: float, fees_pct: f
     NII_annual = sum_net_12
     NIM_pct = (NII_annual/AEA_12)*100.0
     return f2(EMI), f2(NII_annual), f2(AEA_12), f2(NIM_pct)
-def fund_breakeven_months(P: float, tenor_m:int, rate_pct: float, fees_pct: float, cof_pct: float,
-                          prov_pct: float, opex_pct: float, upfront_cost_pct: float):
-    i = rate_pct/100.0/12.0
-    if i<=0 or tenor_m<=0 or P<=0: return "Breakeven not within the tenor"
-    EMI = P * i * (1+i)**tenor_m / ((1+i)**tenor_m - 1)
-    bal=P; C0 = upfront_cost_pct/100.0 * P; cum=-C0
-    for m in range(1, tenor_m+1):
-        interest = bal*i
-        fee = P * (fees_pct/100.0/12.0)
-        funding = bal * (cof_pct/100.0/12.0)
-        prov = bal * (prov_pct/100.0/12.0)
-        opex = bal * (opex_pct/100.0/12.0)
-        net = interest + fee - (funding + prov + opex)
-        cum += net
-        principal = EMI - interest
-        bal = max(bal - principal, 0.0)
-        if cum >= 0: return m
-    return "Breakeven not within the tenor"
-def util_metrics(limit_or_wc: float, u: float, rep_rate: float, fees_pct: float,
-                 cof_pct: float, prov_pct: float, opex_pct: float):
-    EAD = max(limit_or_wc, 0.0) * u
-    margin_pct = rep_rate + fees_pct - (cof_pct + prov_pct + opex_pct)
-    NIM_pct = margin_pct
-    NII_annual = (margin_pct/100.0) * EAD
-    return f2(EAD), f2(NIM_pct), f2(NII_annual)
 
-# = UI and styling =
+def clamp(x: float, lo: float, hi: float) -> float:
+    return max(lo, min(x, hi))
+
+# -- UI and main logic --
+
 st.set_page_config(page_title="rt 360 risk-adjusted pricing", page_icon="💠", layout="wide")
+
 st.markdown("""
 <style>
 .big {font-size:28px;font-weight:800}
 .blue {color:#1666d3}
 .green {color:#18a05e}
-.dataframe td, .dataframe th {border:1px solid #ddd; padding:4px;}
-tr:nth-child(even) {background-color: #f3f9ff;}
-tr:hover {background-color: #eaf3ff;}
-th {background-color:#1666d3;color:white;}
+.dataframe td, .dataframe th {border:1px solid #ddd; padding:8px; text-align:right;}
+.dataframe th {background-color:#1666d3;color:white; text-align:center;}
+tr:nth-child(even) {background-color:#f9fbff;}
+tr:hover {background-color:#dce9ff;}
 </style>
-<div class="big"><span class="blue">rt</span> <span class="green">360</span> — Pricing Model with S&P Ratings, Utilization, and Subsidies</div>
+<div class="big"><span class="blue">rt</span> <span class="green">360</span> &mdash; Pricing Dashboard with S&P Ratings & Utilization</div>
 """, unsafe_allow_html=True)
 
 with st.sidebar:
@@ -265,7 +250,6 @@ snp_spread_adj_bps_map = {
     "CC": 65, "C": 70
 }
 
-# Determine nim subsidy target based on rating and industry risk
 if sp_risk == 1:
     nim_subsidy_target = max(0.8, target_nim_pct - 1.0)
 elif industry in low_risk_industries and snp_rating in ["AAA", "AA+", "AA", "AA-"]:
@@ -327,12 +311,6 @@ if run:
         rate_max = clamp(oibor_pct + spread_max_bps / 100.0, 5.00, 12.00)
 
         if is_fund:
-            be_min = fund_breakeven_months(
-                loan_quantum_omr, tenor_months, rate_min, fees_pct, cof_pct,
-                prov_pct, opex_pct, upfront_cost_pct)
-            be_max = fund_breakeven_months(
-                loan_quantum_omr, tenor_months, rate_max, fees_pct, cof_pct,
-                prov_pct, opex_pct, upfront_cost_pct)
             rep_rate = (rate_min + rate_max) / 2.0
             EMI, NII_annual, AEA_12, NIM_pct = fund_first_year_metrics(
                 loan_quantum_omr, tenor_months, rep_rate, fees_pct, cof_pct, prov_pct, opex_pct)
@@ -342,8 +320,6 @@ if run:
                 "Float Max (bps)": int(round((rate_max - oibor_pct) * 100)),
                 "Rate Min (%)": round(rate_min, 2),
                 "Rate Max (%)": round(rate_max, 2),
-                "Breakeven Min": be_min,
-                "Breakeven Max": be_max,
                 "NIM (%)": NIM_pct
             })
         else:
@@ -356,8 +332,6 @@ if run:
                 "Float Max (bps)": int(round((rate_max - oibor_pct) * 100)),
                 "Rate Min (%)": round(rate_min, 2),
                 "Rate Max (%)": round(rate_max, 2),
-                "Breakeven Min": "N/A",
-                "Breakeven Max": "N/A",
                 "NIM (%)": NIM_pct
             })
     df_out = pd.DataFrame(rows)
@@ -365,11 +339,34 @@ if run:
         "Pricing Bucket",
         "Float Min (bps)", "Float Max (bps)",
         "Rate Min (%)", "Rate Max (%)",
-        "Breakeven Min", "Breakeven Max",
         "NIM (%)"
     ]]
+    # Display with highlighting for UX improvements
+    def highlight_nim(val):
+        if val >= 8:
+            color = '#85e085'  # light green for high NIM
+        elif val <= 4:
+            color = '#f4a582'  # light red for low NIM
+        else:
+            color = ''
+        return f'background-color: {color}'
+
+    styled_df = df_display.style \
+        .set_table_styles([{'selector': 'th', 'props': [('background-color', '#1666d3'), ('color', 'white')]}]) \
+        .applymap(highlight_nim, subset=["NIM (%)"]) \
+        .format({
+            "Float Min (bps)": "{:d}",
+            "Float Max (bps)": "{:d}",
+            "Rate Min (%)": "{:.2f}",
+            "Rate Max (%)": "{:.2f}",
+            "NIM (%)": "{:.2f}"
+        }) \
+        .set_properties(**{'text-align': 'right'})
+
     st.markdown("### 📊 Pricing Summary")
-    st.dataframe(df_display, use_container_width=True)
-    st.caption(f"Applied NIM Target: {nim_subsidy_target:.2f}%, S&P Rating: {snp_rating}, "
-               f"Industry Utilization: {industry_utilization*100:.0f}%, "
-               f"Utilization Spread Adj: {utilization_adj_bps} bps, Mala'a Score Adj: {malaa_adj_bps} bps, New Customer Adj: {new_customer_risk_premium_bps} bps")
+    st.dataframe(styled_df, use_container_width=True)
+
+    st.caption(f"Applied NIM Target: {nim_subsidy_target:.2f}%, "
+               f"S&P Rating: {snp_rating}, Industry Utilization: {industry_utilization*100:.0f}%, "
+               f"Utilization Spread Adj: {utilization_adj_bps} bps, Mala'a Score Adj: {malaa_adj_bps} bps, "
+               f"New Customer Adj: {new_customer_risk_premium_bps} bps")
