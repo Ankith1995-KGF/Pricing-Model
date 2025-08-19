@@ -1,5 +1,5 @@
 import math
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Tuple
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -202,7 +202,7 @@ def fund_first_year_metrics(P: float, tenor_m: int, rep_rate: float, fees_pct: f
 def fund_breakeven_months(P: float, tenor_m:int, rate_pct: float, fees_pct: float, cof_pct: float, prov_pct: float, opex_pct: float, upfront_cost_pct: float):
     i = rate_pct/100.0/12.0
     if i<=0 or tenor_m<=0 or P<=0:
-        return "Breakeven not within the tenor"
+        return "NA"
     EMI = P * i * (1+i)**tenor_m / ((1+i)**tenor_m - 1)
     bal=P; C0 = upfront_cost_pct/100.0 * P; cum=-C0
     for m in range(1, tenor_m+1):
@@ -217,7 +217,7 @@ def fund_breakeven_months(P: float, tenor_m:int, rate_pct: float, fees_pct: floa
         bal = max(bal - principal, 0.0)
         if cum >= 0:
             return m
-    return "Breakeven not within the tenor"
+    return "NA"
 
 def util_metrics(limit_or_wc: float, u: float, rep_rate: float, fees_pct: float, cof_pct: float, prov_pct: float, opex_pct: float):
     EAD = max(limit_or_wc, 0.0) * u
@@ -229,90 +229,78 @@ def util_metrics(limit_or_wc: float, u: float, rep_rate: float, fees_pct: float,
 # === UI and styling ===
 st.set_page_config(page_title="rt 360 risk-adjusted pricing", page_icon="💠", layout="wide")
 
-st.title("RT 360 Risk-Adjusted Pricing")
+st.title("RT 360 Risk-Adjusted Pricing - Pricing Buckets")
 
-st.markdown("""
-This app calculates risk-adjusted pricing and loan metrics based on product, industry, risk scores, and utilization.
-""")
-
-# Inputs
-
-st.sidebar.header("Loan Details")
+# --- Inputs (dropdowns only) ---
+st.sidebar.header("Loan Details (Select from dropdowns)")
 
 product = st.sidebar.selectbox("Product", PRODUCTS_FUND + PRODUCTS_UTIL)
-industry = st.sidebar.selectbox("Industry", list(industry_factor.keys()))
-malaa_score = st.sidebar.slider("MALAA Score", min_value=300, max_value=900, value=700, step=1)
-ltv = st.sidebar.number_input("Loan to Value (LTV) %", min_value=0.0, max_value=200.0, value=50.0, step=0.1, format="%.1f")
-limit_wc = st.sidebar.number_input("Limit / Working Capital", min_value=0.0, value=100.0, step=1.0)
-sales = st.sidebar.number_input("Sales", min_value=0.0, value=1000.0, step=1.0)
-is_fund = product in PRODUCTS_FUND
-rep_rate = st.sidebar.number_input("Repayment Rate % (annual)", min_value=0.0, max_value=100.0, value=13.0, step=0.1)
-fees_pct = st.sidebar.number_input("Fees % (annual)", min_value=0.0, max_value=20.0, value=3.0, step=0.1)
-cof_pct = st.sidebar.number_input("Cost of Funds % (annual)", min_value=0.0, max_value=20.0, value=6.0, step=0.1)
-prov_pct = st.sidebar.number_input("Provisioning % (annual)", min_value=0.0, max_value=20.0, value=1.0, step=0.1)
-opex_pct = st.sidebar.number_input("Opex % (annual)", min_value=0.0, max_value=20.0, value=2.5, step=0.1)
-upfront_cost_pct = st.sidebar.number_input("Upfront Cost %", min_value=0.0, max_value=10.0, value=0.5, step=0.1)
-principal = st.sidebar.number_input("Principal", min_value=0.0, value=1000.0, step=1.0)
 
-# FIXED: removed int() cast and added format="%d" for tenor input
-tenor_months = st.number_input("Tenor (months)", value=36, min_value=6, max_value=360, step=1, format="%d")
+industry = st.sidebar.selectbox("Industry", list(industry_factor.keys()))
+
+malaa_score = st.sidebar.selectbox("MALAA Score", options=list(range(300, 901)), index=400)  # default 700
+
+ltv_options = list(np.round(np.arange(0, 201, 0.5), 2))
+ltv = st.sidebar.selectbox("Loan to Value (LTV) %", ltv_options, index=100)  # default 50%
+
+limit_wc_options = list(range(0, 2001, 10))
+limit_wc = st.sidebar.selectbox("Limit / Working Capital", limit_wc_options, index=10)  # default 100
+
+sales_options = list(range(0, 10001, 100))
+sales = st.sidebar.selectbox("Sales", sales_options, index=10)  # default 1000
+
+is_fund = product in PRODUCTS_FUND
+
+rep_rate_options = list(np.round(np.arange(0, 101, 0.1), 1))
+rep_rate = st.sidebar.selectbox("Repayment Rate % (annual)", rep_rate_options, index=130)  # default 13.0
+
+fees_pct_options = list(np.round(np.arange(0, 20.1, 0.1), 1))
+fees_pct = st.sidebar.selectbox("Fees % (annual)", fees_pct_options, index=30)  # default 3.0
+
+cof_pct_options = list(np.round(np.arange(0, 20.1, 0.1), 1))
+cof_pct = st.sidebar.selectbox("Cost of Funds % (annual)", cof_pct_options, index=60)  # default 6.0
+
+prov_pct_options = list(np.round(np.arange(0, 20.1, 0.1), 1))
+prov_pct = st.sidebar.selectbox("Provisioning % (annual)", prov_pct_options, index=10)  # default 1.0
+
+opex_pct_options = list(np.round(np.arange(0, 20.1, 0.1), 1))
+opex_pct = st.sidebar.selectbox("Opex % (annual)", opex_pct_options, index=25)  # default 2.5
+
+upfront_cost_options = list(np.round(np.arange(0, 10.1, 0.1), 1))
+upfront_cost_pct = st.sidebar.selectbox("Upfront Cost %", upfront_cost_options, index=5)  # default 0.5
+
+principal_options = list(range(0, 10001, 100))
+principal = st.sidebar.selectbox("Principal", principal_options, index=10)  # default 1000
+
+tenor_options = list(range(6, 361))
+tenor_months = st.sidebar.selectbox("Tenor (months)", tenor_options, index=30)  # default 36
 
 st.sidebar.markdown("---")
 
-# Calculations
+fetch = st.sidebar.button("Fetch")
 
-risk = composite_risk(product, industry, malaa_score, ltv, limit_wc, sales, is_fund)
-pd = pd_from_risk(risk, stage=1)
-lgd = lgd_from_product_ltv(product, ltv, is_fund)
-malaa_txt = malaa_label(malaa_score)
+if fetch:
+    # Calculate composite risk and base final spread
+    risk = composite_risk(product, industry, malaa_score, ltv, limit_wc, sales, is_fund)
+    base_spread_bps = base_spread_from_risk(risk) + industry_floor_addon(industry_factor[industry]) + product_floor_addon(product)
 
-industry_floor = industry_floor_addon(industry_factor[industry])
-product_floor = product_floor_addon(product)
-base_spread = base_spread_from_risk(risk)
-util = limit_wc/sales if sales!=0 else 0
-util_disc = utilization_discount_bps(util)
+    # Prepare bucket-wise results
+    bucket_results = []
+    for bucket in BUCKETS:
+        bucket_spread = base_spread_bps * BUCKET_MULT[bucket]
+        annual_rate_pct = bucket_spread / 100.0  # bps to percentage
+        
+        emi, nii_annual, _, _ = fund_first_year_metrics(principal, tenor_months, annual_rate_pct * 12, fees_pct, cof_pct, prov_pct, opex_pct)
+        breakeven_m = fund_breakeven_months(principal, tenor_months, annual_rate_pct * 12, fees_pct, cof_pct, prov_pct, opex_pct, upfront_cost_pct)
 
-final_spread_bps = base_spread + industry_floor + product_floor - util_disc
+        bucket_results.append({
+            "Bucket": bucket,
+            "Spread (bps)": round(bucket_spread, 2),
+            "NII Annual": round(nii_annual, 2),
+            "Breakeven Months": breakeven_m if breakeven_m != "NA" else "NA"
+        })
 
-emi, nii_annual, aea_12, nim_pct = fund_first_year_metrics(principal, tenor_months, rep_rate, fees_pct, cof_pct, prov_pct, opex_pct)
-
-breakeven_months = fund_breakeven_months(principal, tenor_months, rep_rate, fees_pct, cof_pct, prov_pct, opex_pct, upfront_cost_pct)
-
-ead, nim_util_pct, nii_util = util_metrics(limit_wc, util, rep_rate, fees_pct, cof_pct, prov_pct, opex_pct)
-
-# Output results
-
-st.header("Risk and Pricing Summary")
-
-st.markdown(f"""
-- Product: **{product}**
-- Industry: **{industry}**
-- MALAA Score: **{malaa_score}** ({malaa_txt})
-- Composite Risk Factor: **{risk:.2f}**
-- Probability of Default (PD, %): **{pd:.2f}**
-- Loss Given Default (LGD, %): **{lgd:.2f}**
-- Base Spread (bps): **{base_spread:.2f}**
-- Industry Floor Addon (bps): **{industry_floor}**
-- Product Floor Addon (bps): **{product_floor}**
-- Utilization Discount (bps): **{util_disc}**
-- Final Spread (bps): **{final_spread_bps:.2f}**
-""")
-
-st.header("Funding Metrics")
-
-st.markdown(f"""
-- EMI (monthly): **{emi:.2f}**
-- Net Interest Income Annual (NII): **{nii_annual:.2f}**
-- Average EAD over 12 months (AEA): **{aea_12:.2f}**
-- Net Interest Margin % (NIM): **{nim_pct:.2f}%**
-- Breakeven Months: **{breakeven_months}**
-""")
-
-st.header("Utilization Metrics")
-
-st.markdown(f"""
-- Utilization Ratio: **{util:.2f}**
-- Exposure at Default (EAD): **{ead:.2f}**
-- Net Interest Margin % based on Utilization (NIM): **{nim_util_pct:.2f}%**
-- Net Interest Income Annual based on Utilization (NII): **{nii_util:.2f}**
-""")
+    st.header("Pricing Buckets and Metrics")
+    st.dataframe(pd.DataFrame(bucket_results))
+else:
+    st.info("Please provide inputs on the sidebar and press 'Fetch' to calculate.")
