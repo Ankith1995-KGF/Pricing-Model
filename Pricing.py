@@ -114,11 +114,19 @@ def product_floor_addon(prod:str)->int:
 def base_spread_from_risk(risk: float)->float:
     return 75 + 350*(risk - 1.0)
 def utilization_discount_bps(u: float)->int:
-    if u >= 0.85: return -40
-    if u >= 0.70: return -25
-    if u >= 0.50: return 0
-    if u >= 0.30: return +15
-    return +40
+    # Enhanced discount for higher utilization for competitiveness
+    if u >= 0.90:
+        return -50
+    elif u >= 0.85:
+        return -40
+    elif u >= 0.70:
+        return -25
+    elif u >= 0.50:
+        return 0
+    elif u >= 0.30:
+        return +15
+    else:
+        return +40
 def fund_first_year_metrics(P: float, tenor_m: int, rep_rate: float, fees_pct: float,
                             cof_pct: float, prov_pct: float, opex_pct: float)->Tuple[float,float,float,float]:
     i = rep_rate/100.0/12.0
@@ -166,6 +174,7 @@ def util_metrics(limit_or_wc: float, u: float, rep_rate: float, fees_pct: float,
     NIM_pct = margin_pct
     NII_annual = (margin_pct/100.0) * EAD
     return f2(EAD), f2(NIM_pct), f2(NII_annual)
+
 # = UI and styling =
 st.set_page_config(page_title="rt 360 risk-adjusted pricing", page_icon="💠", layout="wide")
 st.markdown("""
@@ -180,6 +189,7 @@ th {background-color:#1666d3;color:white;}
 </style>
 <div class="big"><span class="blue">rt</span> <span class="green">360</span> — Pricing Model with S&P Ratings, Utilization, and Subsidies</div>
 """, unsafe_allow_html=True)
+
 with st.sidebar:
     st.subheader("Market & Bank Assumptions")
     oibor_pct = st.number_input("OIBOR (%)", value=4.10, step=0.01)
@@ -233,17 +243,39 @@ with st.sidebar:
             loan_book_df = None
     st.markdown("---")
     run = st.button("Compute Pricing")
+
 industry_utilization = industry_utilization_map.get(industry, 0.5)
-utilization_subsidy_bps = -15 if industry_utilization > 0.60 else 0
+utilization_subsidy_bps = utilization_discount_bps(industry_utilization)
 new_customer_risk_premium_bps = 25 if new_customer else 0
 sp_risk = SP_RISK_MAP.get(snp_rating, 5)
+
+# Define low risk industry set for subsidy logic
+low_risk_industries = set(TOP_LOW_RISK_INDUSTRIES)
+
+# Define spread adjustment bps for S&P ratings (example values)
+snp_spread_adj_bps_map = {
+    "AAA": -30, "AA+": -25, "AA": -20, "AA-": -15,
+    "A+": -10, "A": -5, "A-": 0,
+    "BBB+": 5, "BBB": 10, "BBB-": 15,
+    "BB+": 20, "BB": 25, "BB-": 30,
+    "B+": 35, "B": 40, "B-": 45,
+    "CCC+": 50, "CCC": 55, "CCC-": 60,
+    "CC": 65, "C": 70
+}
+
+# Calculate nim subsidy factor based on rating and industry
 if sp_risk == 1:
-    nim_subsidy_target = 1.85
-elif industry in TOP_LOW_RISK_INDUSTRIES:
-    nim_subsidy_target = 1.85
+    nim_subsidy_target = max(0.8, target_nim_pct - 1.0)  # Low risk, heavy subsidy capped at 0.8%
+elif industry in low_risk_industries and snp_rating in ["AAA", "AA+", "AA", "AA-"]:
+    nim_subsidy_target = max(1.0, target_nim_pct - 0.5)  # Low risk industry, high rating moderate subsidy
+elif snp_rating in ["BBB-", "BB+", "BB", "BB-"]:
+    nim_subsidy_target = target_nim_pct + 0.5  # Higher risk rating, no subsidy, premium
 else:
     nim_subsidy_target = target_nim_pct
-target_nim_to_apply = nim_subsidy_target
+
+# Spread adjustment for S&P rating
+snp_spread_adj_bps = snp_spread_adj_bps_map.get(snp_rating, 0)  # Default to 0 if missing
+
 historic_spread_adj = 0
 if loan_book_df is not None:
     required_cols = ["Product", "Industry", "Stage", "Spread_bps"]
@@ -257,8 +289,10 @@ if loan_book_df is not None:
             avg_spread = similar_loans["Spread_bps"].mean()
             historic_spread_adj = (avg_spread - 100) * 0.1
             st.sidebar.info(f"Historic avg spread for selection: {avg_spread:.0f} bps")
+
 if run:
     util_base = utilization_input / 100.0 if utilization_input is not None and not is_fund else industry_utilization
+    utilization_adj_bps = utilization_discount_bps(util_base)
     risk_base = composite_risk(product, industry, malaa_score,
                                ltv_pct if is_fund else 60.0,
                                limit_wc, sales_omr, is_fund)
@@ -279,7 +313,8 @@ if run:
         raw_bps = base_spread_from_risk(risk_b)
         floors = BUCKET_FLOOR_BPS[bucket] + malaa_add + ind_add + prod_add
         center_bps = max(round(raw_bps), floors, min_core_spread_bps)
-        center_bps += utilization_subsidy_bps
+        center_bps += snp_spread_adj_bps
+        center_bps += utilization_adj_bps
         center_bps += new_customer_risk_premium_bps
         center_bps += historic_spread_adj
         band_bps = BUCKET_BAND_BPS[bucket]
@@ -292,7 +327,7 @@ if run:
             rate_min = max(rate_min, 6.00)
             rate_max = max(rate_max, 6.00)
             rep_rate = max(rep_rate, 6.00)
-        required_rate = cof_pct + prov_pct + opex_pct + target_nim_to_apply
+        required_rate = cof_pct + prov_pct + opex_pct + nim_subsidy_target
         rep_rate = max(rep_rate, required_rate)
         if is_fund:
             EMI, NII_annual, AEA_12, NIM_pct = fund_first_year_metrics(
@@ -348,6 +383,6 @@ if run:
     df_out = pd.DataFrame(rows)
     st.markdown("### 📊 Pricing Results")
     st.dataframe(df_out, use_container_width=True)
-    st.caption(f"Applied NIM Target: {target_nim_to_apply:.2f}%, S&P Rating: {snp_rating}, "
+    st.caption(f"Applied NIM Target: {nim_subsidy_target:.2f}%, S&P Rating: {snp_rating}, "
                f"Industry Utilization: {industry_utilization*100:.0f}%, "
-               f"Utilization Spread Adj: {utilization_subsidy_bps} bps, New Customer Adj: {new_customer_risk_premium_bps} bps")
+               f"Utilization Spread Adj: {utilization_adj_bps} bps, New Customer Adj: {new_customer_risk_premium_bps} bps")
