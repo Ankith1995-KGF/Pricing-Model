@@ -168,9 +168,6 @@ def util_metrics(limit_or_wc: float, u: float, rep_rate: float, fees_pct: float,
     NII_annual = (margin_pct/100.0) * EAD
     return f2(EAD), f2(NIM_pct), f2(NII_annual)
 
-def clamp(x: float, lo: float, hi: float) -> float:
-    return max(lo, min(x, hi))
-
 # -- UI and main logic --
 
 st.set_page_config(page_title="rt 360 risk-adjusted pricing", page_icon="💠", layout="wide")
@@ -243,9 +240,7 @@ with st.sidebar:
 industry_utilization = industry_utilization_map.get(industry, 0.5)
 new_customer_risk_premium_bps = 25 if new_customer else 0
 sp_risk = SP_RISK_MAP.get(snp_rating, 5)
-
 low_risk_industries = set(TOP_LOW_RISK_INDUSTRIES)
-
 snp_spread_adj_bps_map = {
     "AAA": -30, "AA+": -25, "AA": -20, "AA-": -15,
     "A+": -10, "A": -5, "A-": 0,
@@ -264,7 +259,6 @@ elif snp_rating in ["BBB-", "BB+", "BB", "BB-"]:
     nim_subsidy_target = target_nim_pct + 0.5
 else:
     nim_subsidy_target = target_nim_pct
-
 snp_spread_adj_bps = snp_spread_adj_bps_map.get(snp_rating, 0)
 
 historic_spread_adj = 0
@@ -315,7 +309,6 @@ if run:
         spread_max_bps = max(center_bps + band_bps, spread_min_bps + 10)
         rate_min = clamp(oibor_pct + spread_min_bps / 100.0, 5.00, 12.00)
         rate_max = clamp(oibor_pct + spread_max_bps / 100.0, 5.00, 12.00)
-
         if is_fund:
             rep_rate = (rate_min + rate_max) / 2.0
             EMI, NII_annual, AEA_12, NIM_pct = fund_first_year_metrics(
@@ -376,3 +369,35 @@ if run:
                f"S&P Rating: {snp_rating}, Industry Utilization: {industry_utilization*100:.0f}%, "
                f"Utilization Spread Adj: {utilization_adj_bps} bps, Mala'a Score Adj: {malaa_adj_bps} bps, "
                f"New Customer Adj: {new_customer_risk_premium_bps} bps")
+
+    # ------ Input Risk Bars -------
+    st.markdown("### 📊 Input Risk Visualization")
+    def red_yellow_green(val):
+        # 0 (green) to 1 (red)
+        h = 0.33 - (0.33-0.0) * val
+        import colorsys
+        r, g, b = colorsys.hsv_to_rgb(h, 1, 0.85)
+        return f'rgb({int(r*255)},{int(g*255)},{int(b*255)})'
+
+    def get_risk_bar(label, value, vmin, vmax, colormap):
+        norm_v = (value - vmin) / (vmax - vmin)
+        norm_v = min(max(norm_v, 0), 1)
+        color = colormap(norm_v)
+        bar_length = int(norm_v * 50)
+        bar = "█" * bar_length
+        empty = "░" * (50 - bar_length)
+        st.markdown(
+            f"<div style='display:flex;align-items:center;font-family:monospace;margin-bottom:4px;'>"
+            f"<div style='width:160px;text-align:right;'>{label}:</div>"
+            f"<div style='background:{color};margin:2px 8px 2px 10px;width:415px;border-radius:7px;height:24px;display:flex;align-items:center;'>"
+            f"<span style='font-weight:bold;color:#fff;padding-left:8px;'>{bar}{empty}</span>"
+            f"</div>"
+            f"<div style='width:60px;font-weight:bold;text-align:left;'>{fmt2(value)}</div>"
+            f"</div>", unsafe_allow_html=True
+        )
+
+    get_risk_bar("Mala'a Score", 900-malaa_score, 0, 600, red_yellow_green)
+    get_risk_bar("LTV %", ltv_pct if is_fund else 60, 0, 100, red_yellow_green)
+    get_risk_bar("Industry Factor", industry_factor[industry], 0.85, 1.5, red_yellow_green)
+    get_risk_bar("Product Factor", product_factor[product], 0.85, 1.5, red_yellow_green)
+    get_risk_bar("Utilization %", 100*util_base, 0, 100, lambda v: red_yellow_green(1-v/100))
